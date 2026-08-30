@@ -1,6 +1,6 @@
 {
   "name": "@cooked-ham/hamgoose",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "npm launcher for hamgoose — Factory-Droid-style Mission orchestration extension for Goose (goal → plan → approve → isolated workers → validated code)",
   "keywords": [
     "goose",

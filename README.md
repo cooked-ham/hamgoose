@@ -185,7 +185,7 @@ Requires `goose` (≥ 1.40) on your PATH and `git` (for Git missions).
 
 > [!IMPORTANT]
 > Pin a release once tags exist:
-> `pip install "git+https://github.com/cooked-ham/hamgoose.git@v0.1.0"`.
+> `pip install "git+https://github.com/cooked-ham/hamgoose.git@v0.1.1"`.
 
 <details>
 <summary>🔧 What registration writes (manual option)</summary>

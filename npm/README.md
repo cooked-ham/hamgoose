@@ -15,14 +15,15 @@ dependency-free launcher so the install works from the Node world too. It finds
 ## Usage
 
 ```bash
-# install the Python package (idempotent; finds Python 3.11+, falls back to `py -3`)
-npx @cooked-ham/hamgoose install
+# either globally …
+npm i -g @cooked-ham/hamgoose
+hamgoose register        # install the Python package + register with Goose
+hamgoose help            # show all commands
 
-# install + register with Goose's config in one shot
-npx @cooked-ham/hamgoose register
-
-# run the MCP stdio server (what Goose spawns)
-npx -y @cooked-ham/hamgoose
+# …or ad-hoc via npx
+npx @cooked-ham/hamgoose install     # install the Python package (idempotent)
+npx @cooked-ham/hamgoose register    # install + register with Goose's config
+npx -y @cooked-ham/hamgoose          # run the MCP stdio server (what Goose spawns)
 ```
 
 ## Use it as a Goose extension
@@ -33,6 +34,8 @@ npx -y @cooked-ham/hamgoose
 ```
 npx -y @cooked-ham/hamgoose
 ```
+
+(If you did `npm i -g @cooked-ham/hamgoose`, the command is simply `hamgoose`.)
 
 …or the equivalent `extensions:` entry in `config.yaml`. Then in any repo:
 `goose` → `/start_mission`.

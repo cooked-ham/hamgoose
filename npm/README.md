@@ -38,7 +38,7 @@ npx -y @cooked-ham/hamgoose
 (If you did `npm i -g @cooked-ham/hamgoose`, the command is simply `hamgoose`.)
 
 …or the equivalent `extensions:` entry in `config.yaml`. Then in any repo:
-`goose` → `/start_mission`.
+`goose` → `/prompts` (list) or `/prompt start_mission` (guided setup).
 
 Equivalent channels: `pip install git+https://github.com/cooked-ham/hamgoose.git`
 or, once on PyPI, `pip install hamgoose` / `uvx hamgoose`.

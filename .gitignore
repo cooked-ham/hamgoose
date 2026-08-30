@@ -20,3 +20,9 @@ htmlcov/
 .dbg_*
 .mcp_smoke*
 .pytest_tmp/  
+npm/_tmp_*.json  
+npm/_tmp_*.md  
+npm/_tmp_*.rs  
+npm/_tmp_*.tar.gz  
+npm/goose-1.48.0/  
+npm/_tmp_*  

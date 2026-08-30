@@ -285,6 +285,7 @@ def res_validation(mission_id: str) -> str:
 # ========================================================================== #
 @mcp.prompt()
 def start_mission(goal: str = "", rules: str = "") -> str:
+    """Guided mission setup: ask for the goal and any rules, create the mission, generate the plan, and walk the user through approval."""
     g = goal or "(not provided - ask the user for the goal in one short question)"
     r = (
         rules
@@ -312,6 +313,7 @@ def start_mission(goal: str = "", rules: str = "") -> str:
 
 @mcp.prompt()
 def plan_mission(goal: str) -> str:
+    """Create a mission for the given goal and generate its structured plan for approval."""
     return (
         "Create and generate a plan for a hamgoose mission with goal: \"{}\". "
         "Run mission_create then mission_plan and show the structured plan for approval."
@@ -320,6 +322,7 @@ def plan_mission(goal: str) -> str:
 
 @mcp.prompt()
 def resume_mission(mission_id: str) -> str:
+    """Reconcile the given mission after a pause or restart, resume it, and continue running."""
     return (
         "Resume hamgoose mission {} (reconcile state after any restart). "
         "Check mission_status; if paused/blocked call mission_resume, then mission_run."
@@ -328,6 +331,7 @@ def resume_mission(mission_id: str) -> str:
 
 @mcp.prompt()
 def validate_milestone(mission_id: str) -> str:
+    """Run scrutiny + user-testing validation on the active milestone of the given mission."""
     return (
         "Validate the active milestone of hamgoose mission {} by running mission_validate "
         "(scrutiny and user_testing) and reporting the structured verdict."

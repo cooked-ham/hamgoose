@@ -107,7 +107,7 @@ Then, in **any** repository you're working in:
 
 ```text
 $ goose
-You:   /start_mission
+You:   /prompt start_mission
 goose: What's the goal?
 You:   Migrate the auth module from session cookies to JWT.
 goose: Any rules or constraints? (concurrency, provider/model, git, validation)
@@ -126,7 +126,7 @@ Mid-mission you can just say *"pause"*, *"don't touch config files"*, or
 
 > [!NOTE]
 > No slash command? Just say **"start a hamgoose mission"** in plain English.
-> The `/start_mission` prompt and natural language drive the same guided flow.
+> `/prompt start_mission` runs the guided setup; plain English does the same thing.
 
 ## 🏗️ How it works
 
@@ -220,7 +220,7 @@ extensions:
 | Read status / plan / events / list | `mission_status` / `mission_plan_view` / `mission_events` / `mission_list` |
 
 **Resources** (read): `mission://{id}/status|plan|events|features|milestones|validation`
-**Prompts**: `start_mission` (the `/start_mission` walkthrough) · `plan_mission` · `resume_mission` · `validate_milestone`
+**Prompts** (list with `/prompts`, run with `/prompt <name>`): `start_mission` (guided setup) · `plan_mission` · `resume_mission` · `validate_milestone`
 
 ## 🗄️ Where state lives
 

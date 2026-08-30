@@ -9,6 +9,11 @@ module exists so the install path is a single command even headless:
     hamgoose unregister  # removes it again
 
 The write is atomic and always leaves a `.bak` of the previous file.
+
+Schema note: Goose >= 1.48 expects stdio entries as `cmd` (single
+executable) + `args` (list). Entries written with the older `command:`
+field are rejected by Goose ("Skipping malformed extension config entry");
+`register` detects and repairs them in place (status "repaired").
 """
 from __future__ import annotations
 
@@ -109,6 +114,24 @@ def _save(config_file: Path, data: dict) -> None:
     os.replace(tmp, config_file)
 
 
+def _stdio_entry(name: str) -> dict:
+    """Build the stdio entry in the current Goose schema (cmd + args list).
+
+    Goose >= 1.48 expects `cmd` (single executable) plus `args` (list); the
+    older `command: "<full line>"` shape is rejected with
+    "Skipping malformed extension config entry" and never loads.
+    """
+    parts = resolve_command().split()
+    return {
+        "enabled": True,
+        "type": "stdio",
+        "name": name,
+        "description": DESCRIPTION,
+        "cmd": parts[0],
+        "args": parts[1:],
+    }
+
+
 def register(config_file: Optional[Path] = None, name: str = DEFAULT_NAME, force: bool = False) -> dict:
     """Add/refresh the hamgoose stdio extension entry. Returns a result dict."""
     path = Path(config_file) if config_file else find_goose_config_file()
@@ -117,20 +140,22 @@ def register(config_file: Optional[Path] = None, name: str = DEFAULT_NAME, force
     if not isinstance(exts, dict):
         exts = {}
     existing = exts.get(name)
+    if isinstance(existing, dict) and "cmd" not in existing:
+        # Legacy/broken entry (old `command:` schema or missing fields).
+        # Goose >= 1.48 skips malformed entries, so repair it in place —
+        # otherwise `register` would forever report "already_registered".
+        entry = _stdio_entry(name)
+        exts[name] = entry
+        data["extensions"] = exts
+        _save(path, data)
+        return {"status": "repaired", "config": str(path), "entry": entry}
     if existing is not None and not force:
         return {"status": "already_registered", "config": str(path), "entry": existing}
-    entry = {
-        "enabled": True,
-        "type": "stdio",
-        "name": name,
-        "description": DESCRIPTION,
-        "command": resolve_command(),
-    }
+    entry = _stdio_entry(name)
     exts[name] = entry
     data["extensions"] = exts
     _save(path, data)
     return {"status": "registered", "config": str(path), "entry": entry}
-
 
 def unregister(config_file: Optional[Path] = None, name: str = DEFAULT_NAME) -> dict:
     """Remove the hamgoose entry. Returns a result dict."""

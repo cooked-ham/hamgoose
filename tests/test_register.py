@@ -19,7 +19,9 @@ def test_register_creates_config(tmp_path):
     assert e["type"] == "stdio"
     assert e["enabled"] is True
     assert e["name"] == "hamgoose"
-    assert "hamgoose" in e["command"]
+    assert e["cmd"]
+    assert isinstance(e["args"], list)
+    assert "hamgoose" in " ".join([e["cmd"], *e["args"]])
     # no backup needed on first creation
     assert not (tmp_path / "config.yaml.bak").exists()
 
@@ -53,6 +55,29 @@ def test_register_idempotent_without_force(tmp_path):
     r = register(cfg)
     assert r["status"] == "already_registered"
     assert cfg.read_text(encoding="utf-8") == first
+
+
+def test_register_repairs_legacy_entry(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "extensions:\n"
+        "  hamgoose:\n"
+        "    enabled: true\n"
+        "    type: stdio\n"
+        "    name: hamgoose\n"
+        "    description: Mission orchestration for Goose\n"
+        "    command: hamgoose\n",
+        encoding="utf-8",
+    )
+    r = register(cfg)
+    assert r["status"] == "repaired"
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    e = data["extensions"]["hamgoose"]
+    assert "command" not in e
+    assert e["cmd"]
+    assert isinstance(e["args"], list)
+    # and now idempotent
+    assert register(cfg)["status"] == "already_registered"
 
 
 def test_register_force_overwrites(tmp_path):

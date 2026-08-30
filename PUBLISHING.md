@@ -24,12 +24,12 @@ upload from does.
 ## Upload
 
 ```bash
-python -m build                      # -> dist/hamgoose-0.1.1-*.whl + .tar.gz
+python -m build                      # -> dist/hamgoose-0.1.2-*.whl + .tar.gz
 python -m twine check dist/*         # metadata lint
 python -m twine upload dist/*        # uses PYPI_TOKEN / ~/.pypirc
 # uv alternative:  uv publish        (reads UV_PUBLISH_TOKEN)
 
-git tag -a v0.1.1 -m "v0.1.1"
+git tag -a v0.1.2 -m "v0.1.2"
 git push --tags
 ```
 

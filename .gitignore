@@ -19,3 +19,4 @@ htmlcov/
 .tmp_*
 .dbg_*
 .mcp_smoke*
+.pytest_tmp/  

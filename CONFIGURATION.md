@@ -65,7 +65,8 @@ extensions:
     type: stdio
     name: hamgoose
     description: Mission orchestration for Goose
-    command: C:\abs\path\to\.venv\Scripts\python.exe -m hamgoose
+    cmd: C:\abs\path\to\.venv\Scripts\python.exe
+    args: [-m, hamgoose]
 ```
 
 Prefer a command that is on PATH (`hamgoose`) when possible so the entry

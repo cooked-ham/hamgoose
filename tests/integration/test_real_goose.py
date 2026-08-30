@@ -127,8 +127,10 @@ def test_4_goose_discovers_and_drives_extension(tmp_path):
     init_git(repo)
     prompt = ("Use the hamgoose extension. Call the mission_create tool with goal "
               "'real integration'. Report the exact mission id it returns. Do exactly one tool call.")
+    # Inline name must not collide with a `hamgoose` entry that may be
+    # registered in the real config.yaml (Goose rejects duplicate names).
     cmd = [GOOSE, "run", "-t", prompt, "--max-turns", "6", "--output-format", "text",
-           "--no-session", "--with-extension", "hamgoose:{0} -m hamgoose".format(sys.executable)]
+           "--no-session", "--with-extension", "hamgoose_it:{0} -m hamgoose".format(sys.executable)]
     from hamgoose import gosub
 
     stdout, stderr, _exit, _to = gosub.run_captured(cmd, cwd=repo, timeout=300)

@@ -31,6 +31,7 @@ import yaml
 
 DEFAULT_NAME = "hamgoose"
 DESCRIPTION = "Mission orchestration for Goose"
+SLASH_COMMAND = "mission"
 
 _USAGE = """\
 hamgoose - Mission orchestration extension for Goose
@@ -132,44 +133,95 @@ def _stdio_entry(name: str) -> dict:
     }
 
 
+def recipe_path() -> Path:
+    """Path of the /mission recipe shipped inside the installed package."""
+    return Path(__file__).resolve().parent / "recipes" / "mission.yaml"
+
+
+def _ensure_slash_command(data: dict) -> tuple:
+    """Idempotently ensure slash_commands maps /mission to the package recipe.
+
+    Returns (entries, changed).
+    """
+    entries = data.get("slash_commands")
+    if not isinstance(entries, list):
+        entries = []
+    target = recipe_path().as_posix()
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("command") == SLASH_COMMAND:
+            if entry.get("recipe_path") == target:
+                return entries, False
+            entry["recipe_path"] = target
+            return entries, True
+    entries.append({"command": SLASH_COMMAND, "recipe_path": target})
+    return entries, True
+
 def register(config_file: Optional[Path] = None, name: str = DEFAULT_NAME, force: bool = False) -> dict:
-    """Add/refresh the hamgoose stdio extension entry. Returns a result dict."""
+    """Add/refresh the hamgoose stdio entry and the /mission slash command.
+
+    Returns a result dict with the extension entry and slash command state.
+    """
     path = Path(config_file) if config_file else find_goose_config_file()
     data = _load(path)
     exts = data.get("extensions")
     if not isinstance(exts, dict):
         exts = {}
     existing = exts.get(name)
-    if isinstance(existing, dict) and "cmd" not in existing:
+    repaired = isinstance(existing, dict) and "cmd" not in existing
+    if repaired:
         # Legacy/broken entry (old `command:` schema or missing fields).
         # Goose >= 1.48 skips malformed entries, so repair it in place —
         # otherwise `register` would forever report "already_registered".
         entry = _stdio_entry(name)
         exts[name] = entry
-        data["extensions"] = exts
-        _save(path, data)
-        return {"status": "repaired", "config": str(path), "entry": entry}
-    if existing is not None and not force:
-        return {"status": "already_registered", "config": str(path), "entry": existing}
-    entry = _stdio_entry(name)
-    exts[name] = entry
+        changed = True
+    elif existing is not None and not force:
+        entry, changed = existing, False
+    else:
+        entry = _stdio_entry(name)
+        exts[name] = entry
+        changed = True
     data["extensions"] = exts
-    _save(path, data)
-    return {"status": "registered", "config": str(path), "entry": entry}
+    slash_entries, slash_changed = _ensure_slash_command(data)
+    data["slash_commands"] = slash_entries
+    if changed or slash_changed:
+        _save(path, data)
+    status = "repaired" if repaired else ("registered" if changed else "already_registered")
+    return {
+        "status": status,
+        "config": str(path),
+        "entry": entry,
+        "slash_command": SLASH_COMMAND,
+        "recipe_path": recipe_path().as_posix(),
+        "slash_added": slash_changed,
+    }
 
 def unregister(config_file: Optional[Path] = None, name: str = DEFAULT_NAME) -> dict:
-    """Remove the hamgoose entry. Returns a result dict."""
+    """Remove the hamgoose entry and the /mission slash command."""
     path = Path(config_file) if config_file else find_goose_config_file()
     data = _load(path)
+    removed = None
     exts = data.get("extensions")
-    if not isinstance(exts, dict) or name not in exts:
+    if isinstance(exts, dict) and name in exts:
+        removed = exts.pop(name)
+        if not exts:
+            data.pop("extensions", None)
+    slash_removed = False
+    slash = data.get("slash_commands")
+    if isinstance(slash, list):
+        kept = [e for e in slash if not (isinstance(e, dict) and e.get("command") == SLASH_COMMAND)]
+        if len(kept) != len(slash):
+            slash_removed = True
+            if kept:
+                data["slash_commands"] = kept
+            else:
+                data.pop("slash_commands", None)
+    if removed is None and not slash_removed:
         return {"status": "not_registered", "config": str(path)}
-    removed = exts.pop(name)
-    if not exts:
-        data.pop("extensions", None)
+    if removed is None:
+        removed = {"command": SLASH_COMMAND}
     _save(path, data)
     return {"status": "unregistered", "config": str(path), "entry": removed}
-
 
 def cli_main(argv: Optional[list] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -195,7 +247,9 @@ def cli_main(argv: Optional[list] = None) -> int:
     if isinstance(entry, dict):
         for key, value in entry.items():
             print(f"    {key}: {value}")
+    if result["status"] in ("registered", "repaired") or result.get("slash_added"):
+        print(f"slash command: /{result['slash_command']} <goal>  ->  {result['recipe_path']}")
     if result["status"] == "registered":
-        print("Done. Start a new Goose session; the mission_* tools will appear.")
+        print("Done. In any repo: run `goose`, then type /mission <goal> (or just ask for a mission).")
         print("Manage it any time: goose configure -> Extensions (toggle / remove), or `hamgoose unregister`.")
     return 0

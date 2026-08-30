@@ -26,3 +26,6 @@ npm/_tmp_*.rs
 npm/_tmp_*.tar.gz  
 npm/goose-1.48.0/  
 npm/_tmp_*  
+_goosetown/  
+_missione2e/  
+*_run.bat  

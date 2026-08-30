@@ -4,7 +4,7 @@
 
 [project]
 name = "hamgoose"
-version = "0.1.3"
+version = "0.1.4"
 description = "Factory-Droid-style Mission orchestration extension for Goose"
 readme = "README.md"
 requires-python = ">=3.11"

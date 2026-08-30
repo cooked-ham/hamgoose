@@ -24,6 +24,34 @@ def test_register_creates_config(tmp_path):
     assert "hamgoose" in " ".join([e["cmd"], *e["args"]])
     # no backup needed on first creation
     assert not (tmp_path / "config.yaml.bak").exists()
+    # the /mission slash command is registered alongside the extension
+    slash = data["slash_commands"]
+    assert any(en.get("command") == "mission" and en.get("recipe_path") for en in slash)
+
+
+def test_register_slash_roundtrip(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    # a pre-existing user slash command must survive registration
+    cfg.write_text(
+        "slash_commands:\n  - command: daily-report\n    recipe_path: /x/report.yaml\n",
+        encoding="utf-8",
+    )
+    r = register(cfg)
+    assert r["status"] == "registered"
+    assert r["slash_added"] is True
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    cmds = [e["command"] for e in data["slash_commands"]]
+    assert cmds == ["daily-report", "mission"]
+    # idempotent: no duplicate, no rewrite
+    first = cfg.read_text(encoding="utf-8")
+    r2 = register(cfg)
+    assert r2["status"] == "already_registered"
+    assert r2["slash_added"] is False
+    assert cfg.read_text(encoding="utf-8") == first
+    # unregister removes only our mapping
+    unregister(cfg)
+    data2 = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert [e["command"] for e in data2["slash_commands"]] == ["daily-report"]
 
 
 def test_register_preserves_existing_entries(tmp_path):

@@ -187,7 +187,8 @@ function printHelp() {
 Runs the Python hamgoose server (github.com/cooked-ham/hamgoose).
 
 Usage (after \`npm i -g @cooked-ham/hamgoose\`, or via \`npx -y @cooked-ham/hamgoose\`):
-  hamgoose                    run the MCP stdio server (what Goose spawns)
+  hamgoose                    in a terminal: one-shot setup (install + register)
+                              piped/stdio (what Goose spawns): run the MCP server
   hamgoose install            install the Python package (idempotent)
   hamgoose register           install + register with Goose's config.yaml
   hamgoose unregister         remove hamgoose from Goose's config.yaml
@@ -195,7 +196,11 @@ Usage (after \`npm i -g @cooked-ham/hamgoose\`, or via \`npx -y @cooked-ham/hamg
   hamgoose --version          print version
 
 Use with Goose: Add Extension (STDIO), Name "hamgoose", Command:
-  hamgoose`);
+  hamgoose
+
+In any repo: run \`goose\`, then type \`/mission <goal>\` (or just ask for a
+mission in plain English). Manage with \`hamgoose unregister\` or
+\`goose configure\` -> Extensions.`);
 }
 
 const [, , ...args] = process.argv;
@@ -227,7 +232,18 @@ if (first) {
   process.exit(2);
 }
 
-// No args: stdio server mode (Goose's extension command).
+// No args, real terminal: one-shot interactive setup (install + register).
+// Goose spawns us with piped stdio, which falls through to server mode below.
+if (process.stdin.isTTY && process.stdout.isTTY) {
+  console.log(`hamgoose v${VERSION} — setting up (idempotent, safe to rerun)`);
+  const setup = ensureInstalled(false);
+  if (!setup) process.exit(1);
+  console.log("Registering with Goose…");
+  const r = launch(setup, ["register"], true);
+  process.exit(r.status ?? 1);
+}
+
+// No args + non-TTY: stdio server mode (Goose's extension command).
 if (process.env.HAMGOOSE_LAUNCHER) {
   console.error("error: hamgoose launcher recursion guard tripped — refusing to spawn. " +
     "Check that `where hamgoose` / `which hamgoose` is not resolving to this launcher.");

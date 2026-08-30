@@ -1,0 +1,23 @@
+title: Mission
+description: Kick off a hamgoose mission (goal in, plan out, approval gate)
+parameters:
+  - key: goal
+    input_type: string
+    requirement: required
+    description: What to build or change
+instructions: |
+  The user is starting a hamgoose mission. Goal: "{{ goal }}".
+
+  Drive the guided flow with the hamgoose mission tools:
+  1. Call mission_create with the goal above (no rules needed; the user can
+     steer constraints later).
+  2. Call mission_plan for the returned mission id.
+  3. Present the plan compactly (milestones, features, limits) and ask for
+     approval.
+  4. Once the user approves, call mission_approve, then mission_run.
+  5. Keep updates short and conversational as milestones complete.
+
+  If the user's message explicitly says to auto-approve, skip asking in step 3
+  and approve directly after showing the plan.
+prompt: |
+  Start a hamgoose mission with goal: {{ goal }}

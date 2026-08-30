@@ -1,0 +1,83 @@
+"""Robust subprocess helper for launching `goose run`.
+
+`goose run` spawns child processes (extension servers, helpers) that inherit the
+parent's stdout/stderr. On Windows, reading those with pipes + communicate() can
+hang forever after the direct child exits because a grandchild keeps the pipe
+open. Capturing output to temp files and using proc.wait() (which only tracks the
+direct child's handle) avoids the hang. Timeouts kill the whole process tree.
+"""
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+import tempfile
+from typing import Dict, List, Optional, Tuple
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                       capture_output=True, errors="replace")
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+
+def run_captured(
+    cmd: List[str],
+    cwd: Optional[str] = None,
+    timeout: Optional[int] = None,
+    env: Optional[Dict[str, str]] = None,
+) -> Tuple[str, str, Optional[int], bool]:
+    """Run cmd, capturing stdout/stderr via temp files.
+
+    Returns (stdout, stderr, exit_code, timed_out).
+    """
+    fd_out, out_path = tempfile.mkstemp(suffix=".out")
+    os.close(fd_out)
+    fd_err, err_path = tempfile.mkstemp(suffix=".err")
+    os.close(fd_err)
+
+    kwargs = {"cwd": cwd, "env": env if env is not None else dict(os.environ)}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    timed_out = False
+    exit_code: Optional[int] = None
+    try:
+        with open(out_path, "w", encoding="utf-8", errors="replace") as of, \
+                open(err_path, "w", encoding="utf-8", errors="replace") as ef:
+            proc = subprocess.Popen(cmd, stdout=of, stderr=ef, **kwargs)
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _kill_tree(proc)
+                try:
+                    proc.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    pass
+            exit_code = proc.returncode
+    finally:
+        pass
+
+    def _read(p: str) -> str:
+        try:
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                return fh.read()
+        except OSError:
+            return ""
+
+    stdout, stderr = _read(out_path), _read(err_path)
+    for p in (out_path, err_path):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    return stdout, stderr, exit_code, timed_out

@@ -1,268 +1,470 @@
-# Mission: Build a Factory-Droid-style Mission system for Goose
+# Mission: Build `hamgoose`, a Factory-Droid-Style Mission System for Goose
 
-I want you to extend Goose with a first-class **Mission orchestration system** inspired by the behavior and workflow of Factory Droid's current Missions feature.
+Build a first-class **Mission orchestration extension for Goose** called:
 
-This is NOT merely:
+`hamgoose`
 
-- a Todo list
-- a Recipe
-- a planner prompt
-- a wrapper around `delegate()`
-- a static YAML workflow
-- a single agent that happens to use subagents
+The goal is to recreate the useful behavior of Factory Droid's Mission system inside Goose using Goose's officially supported extension architecture.
 
-The goal is a durable orchestration layer for long, complex projects that can plan work, create dependency-aware features and milestones, run isolated Goose workers, validate their results, recover from failures, pause/resume/replan, and maintain persistent state until the overall goal has actually been achieved.
+This must be a real orchestration system for long-running software projects, not:
 
-Call the project/extension **goose-missions** unless a more appropriate project-local naming convention already exists.
+* a glorified Todo list
+* a Recipe with extra steps
+* one giant orchestration prompt
+* a thin wrapper around `delegate()`
+* a static YAML workflow
+* a single Goose context pretending to be multiple agents
 
----
-
-# 0. FIRST: INVESTIGATE GOOSE ITSELF
-
-Before implementing anything, inspect the Goose installation/source/version available on this machine and determine the CURRENT supported mechanisms for:
-
-- MCP extensions
-- platform extensions if accessible
-- Recipes
-- custom agents
-- the Summon extension
-- `delegate`
-- asynchronous delegates
-- `load`
-- Todo/task tracking
-- MCP Apps
-- Goose session persistence
-- `goose run`
-- `goose run --provider`
-- `goose run --model`
-- `goose run --max-turns`
-- `goose run --output-format json`
-- `goose run --output-format stream-json`
-- session naming/resumption
-- extension discovery
-- project/repository context
-- Git operations
-- permissions and sandbox behavior
-
-Do NOT assume an old Goose API from memory.
-
-Inspect the locally installed Goose CLI help and, when practical, the current Goose source/documentation.
-
-Document your findings before choosing the architecture.
-
-Important known behavioral constraint: Goose delegated subagents are leaf workers. Nested delegation from a delegated subagent is intentionally restricted. Therefore Mission orchestration MUST remain in the parent/controller layer. Do not design an architecture that requires arbitrary worker → worker → worker delegation.
-
-Prefer public/stable Goose interfaces where possible.
-
-Do not modify Goose core unnecessarily if a standalone MCP extension + companion Recipe/agent/controller can achieve the desired behavior cleanly.
-
-However, if a platform extension is genuinely necessary to achieve reliable orchestration, explain exactly why before choosing that route.
-
----
-
-# 1. TARGET USER EXPERIENCE
-
-The finished system should make this interaction possible:
+The finished system should support:
 
 ```text
-User:
-Start a mission to migrate this application from X to Y while preserving behavior.
+USER GOAL
+   ↓
+PROJECT ANALYSIS
+   ↓
+STRUCTURED PLAN
+   ↓
+FEATURES + DEPENDENCIES + MILESTONES
+   ↓
+USER APPROVAL
+   ↓
+DEPENDENCY-AWARE EXECUTION
+   ↓
+ISOLATED WORKERS
+   ↓
+REAL CODE / ARTIFACT OUTPUT
+   ↓
+SCRUTINY VALIDATION
+   +
+USER-FACING VALIDATION
+   ↓
+AUTOMATIC CORRECTIVE WORK
+   ↓
+NEXT MILESTONE
+   ↓
+FINAL VALIDATION
+   ↓
+MISSION COMPLETED
+```
+
+Throughout that process `hamgoose` must maintain:
+
+* persistent Mission state
+* Git traceability
+* pause/resume
+* crash recovery
+* steering
+* replanning
+* bounded retries
+* configurable models
+* configurable concurrency
+* event history
+* dependency tracking
+* validation history
+* worker status
+* milestone status
+
+---
+
+# 1. REQUIRED READING
+
+Before designing or implementing anything, read the current official Goose custom-extension documentation:
+
+https://goose-docs.ai/docs/tutorials/custom-extensions
+
+This is **mandatory required reading**.
+
+Treat the current official Goose documentation as authoritative over:
+
+* pretrained knowledge
+* older Goose examples
+* third-party tutorials
+* assumptions in this prompt
+* remembered APIs
+* outdated GitHub code
+
+The architecture and implementation of `hamgoose` MUST adhere to the current officially supported Goose extension model.
+
+Before implementation, explicitly verify from the documentation:
+
+* how Goose custom extensions are structured
+* Goose's MCP architecture
+* MCP Tools
+* MCP Resources
+* MCP Prompts
+* MCP Sampling
+* extension transport mechanisms
+* STDIO extension configuration
+* extension registration/discovery
+* supported SDK/runtime expectations
+* extension development and testing workflow
+* how extension errors are surfaced
+* installation/reload behavior
+* relevant permissions/security behavior
+* current limitations affecting this project
+
+Do not invent a proprietary Goose extension system.
+
+Do not modify Goose core unless the officially supported extension architecture genuinely cannot provide a required capability.
+
+If any core modification becomes necessary, document the reason before making it.
+
+---
+
+# 2. INVESTIGATE THE INSTALLED GOOSE ENVIRONMENT
+
+After reading the official extension documentation, inspect the Goose installation/version available on this machine.
+
+Determine the CURRENT supported behavior of:
+
+* MCP extensions
+* MCP Tools
+* MCP Resources
+* MCP Prompts
+* MCP Sampling
+* MCP Apps
+* Recipes
+* custom agents
+* Summon
+* `delegate`
+* asynchronous delegation
+* `load`
+* Todo/task tracking
+* Goose session persistence
+* `goose run`
+* provider selection
+* model selection
+* maximum turn controls
+* structured JSON output
+* streaming structured output
+* session naming
+* session resumption
+* extension discovery
+* repository context
+* Git operations
+* permissions
+* sandbox behavior
+
+Use this authority order:
+
+1. current official Goose documentation
+2. locally installed Goose CLI help
+3. source corresponding to the installed Goose version
+4. current official Goose GitHub repository
+
+Do not build against remembered or outdated Goose behavior.
+
+---
+
+# 3. IMPORTANT GOOSE SUBAGENT CONSTRAINT
+
+Treat delegated Goose subagents as **leaf workers** unless the current installed Goose implementation explicitly proves otherwise.
+
+Do NOT design:
+
+```text
+Orchestrator
+  ↓
+Worker
+  ↓
+Worker's Worker
+  ↓
+Nested Worker
+```
+
+Prefer:
+
+```text
+Mission Orchestrator
+  ├── Worker F001
+  ├── Worker F002
+  ├── Worker F003
+  ├── Scrutiny Validator
+  └── User-Testing Validator
+```
+
+The Mission orchestrator/controller remains responsible for:
+
+* scheduling
+* dependencies
+* worker dispatch
+* validation
+* retries
+* persistence
+* state transitions
+* replanning
+
+Workers should not become independent orchestrators.
+
+---
+
+# 4. PRE-IMPLEMENTATION ARCHITECTURE REPORT
+
+Before implementation, create:
+
+```text
+HAMGOOSE ARCHITECTURE REPORT
+
+1. Official Goose extension documentation findings
+2. Installed Goose version/environment
+3. Supported MCP capabilities
+4. Extension registration mechanism
+5. Transport choice
+6. SDK/runtime choice
+7. Tools/Resources/Prompts design
+8. MCP Sampling decision
+9. Worker isolation mechanism
+10. Delegation capabilities and limitations
+11. Headless Goose capabilities
+12. Session persistence behavior
+13. Mission persistence architecture
+14. Git/worktree strategy
+15. Scheduler architecture
+16. Validator architecture
+17. Crash-recovery architecture
+18. Security/permission implications
+19. Components/files to create
+20. Integration-test strategy
+21. Known risks
+
+OFFICIAL GOOSE EXTENSION COMPLIANCE
+
+PASS/FAIL
+
+Any deviations:
+...
+
+Implementation may proceed:
+YES/NO
+```
+
+If compliance is `FAIL`, correct the architecture before implementation.
+
+Do not stop after producing the report.
+
+Once the architecture is valid, proceed directly with implementation.
+
+---
+
+# 5. ARCHITECTURAL PRINCIPLE
+
+`hamgoose` should be a genuine Goose extension using the official supported architecture.
+
+Expected general structure:
+
+```text
+                    Goose
+                      │
+                      │ MCP
+                      ▼
+                   hamgoose
+                      │
+        ┌─────────────┼─────────────┐
+        │             │             │
+   Mission DB     Scheduler     Git Manager
+        │             │             │
+        ├────── Worker Manager ─────┤
+        │                           │
+        ├──── Validator Manager ────┤
+        │                           │
+        └──── Event / Recovery ─────┘
+```
+
+The extension should own deterministic orchestration mechanics.
+
+LLMs should handle semantic reasoning.
+
+## Code should control
+
+* Mission IDs
+* feature IDs
+* milestone IDs
+* state transitions
+* dependency satisfaction
+* concurrency
+* retries
+* timestamps
+* persistent storage
+* worker process/session tracking
+* Git/worktree tracking
+* event logging
+* pause state
+* timeout behavior
+* crash recovery
+* legality of operations
+
+## Models should decide
+
+* how to decompose the project
+* how features should be implemented
+* architectural choices
+* corrective implementation strategies
+* validation interpretation
+* replanning decisions
+* semantic failure diagnosis
+
+Core principle:
+
+**Prompts express semantic intent. Code enforces orchestration mechanics.**
+
+Do not rely on conversational memory for deterministic Mission state.
+
+---
+
+# 6. USE MCP CAPABILITIES INTENTIONALLY
+
+Do not expose every operation as a random MCP Tool.
+
+Use Goose-supported MCP capabilities according to their intended purpose.
+
+## MCP Tools
+
+Use primarily for state-changing operations such as:
+
+```text
+mission_create
+mission_plan
+mission_approve
+mission_run
+mission_pause
+mission_resume
+mission_steer
+mission_replan
+mission_cancel
+mission_retry_feature
+mission_validate
+```
+
+The exact names may differ, but equivalent functionality must exist.
+
+## MCP Resources
+
+Where supported and useful, expose read-oriented Mission data such as:
+
+```text
+mission://<id>/status
+mission://<id>/plan
+mission://<id>/events
+mission://<id>/features
+mission://<id>/milestones
+mission://<id>/validation
+```
+
+## MCP Prompts
+
+Where appropriate, expose reusable Mission workflows such as:
+
+```text
+start-mission
+plan-mission
+resume-mission
+validate-milestone
+```
+
+## MCP Sampling
+
+Investigate whether MCP Sampling is useful for semantic operations such as:
+
+* feature decomposition
+* plan analysis
+* validation interpretation
+* failure diagnosis
+* replanning
+
+Do not automatically build the entire system around Sampling.
+
+Compare it against:
+
+* parent Goose orchestration
+* isolated `goose run` workers
+* Goose delegation
+
+Choose the cleanest and most reliable design.
+
+Document the decision.
+
+---
+
+# 7. TARGET USER EXPERIENCE
+
+A user should be able to say something like:
+
+```text
+Start a mission to migrate this application from X to Y
+while preserving current behavior.
+```
+
+`hamgoose` should:
+
+1. analyze the repository
+2. identify relevant project instructions
+3. determine build/test/startup mechanisms
+4. ask planning questions only when genuinely necessary
+5. create a structured Mission plan
+6. group work into milestones
+7. define feature dependencies
+8. define acceptance criteria
+9. define validation criteria
+10. present the plan for approval
+
+Example:
+
+```text
+HAMGOOSE MISSION PLAN
 
 Mission:
-Analyzes repository.
-Asks useful planning questions where genuinely necessary.
-Builds proposed mission plan.
+Migrate application from X to Y while preserving behavior.
 
-Mission Plan
-  Milestone 1 — Foundation
-    F001 ...
-    F002 ...
-  Milestone 2 — Migration
-    F003 ...
-    F004 ...
-  Milestone 3 — Cleanup
-    F005 ...
+Milestone 1 — Foundation
+  F001 ...
+  F002 ...
 
-Validation strategy:
-  scrutiny validation: enabled
-  user-flow validation: enabled
+Milestone 2 — Migration
+  F003 ...
+  F004 ...
+
+Milestone 3 — Integration
+  F005 ...
+
+Validation:
+  Scrutiny validation: enabled
+  User-facing validation: enabled
 
 Estimated worker runs: ...
 Estimated validation runs: ...
 
-Awaiting approval.
+Status: AWAITING APPROVAL
 ```
 
-No implementation work begins before the initial mission plan is approved.
+No application implementation should occur before the initial plan is approved.
 
-Once approved:
+Repository inspection during planning is allowed.
+
+---
+
+# 8. MISSION LIFECYCLE
+
+Support an explicit Mission state machine.
+
+At minimum:
 
 ```text
-Mission status: RUNNING
-Milestone: 1/3
-
-F001 RUNNING
-F002 RUNNING
-F003 BLOCKED BY F001
-F004 PENDING
-
-Workers:
-worker-F001 ...
-worker-F002 ...
+CREATED
+ANALYZING
+PLANNING
+AWAITING_APPROVAL
+RUNNING
+PAUSED
+BLOCKED
+VALIDATING
+COMPLETED
+FAILED
+CANCELLED
 ```
 
-The system continues orchestrating until the mission:
+Transitions must be deliberate, validated and persisted.
 
-- completes successfully,
-- is paused,
-- becomes genuinely blocked and needs user input,
-- is cancelled,
-- or exhausts a defined recovery/retry policy.
-
-The user should be able to leave and later resume the mission without losing mission state.
-
----
-
-# 2. CORE FACTORY-MISSION BEHAVIOR TO REPRODUCE
-
-Factory's Mission model should be treated conceptually as three classes of agents:
-
-## A. ORCHESTRATOR
-
-The orchestrator owns the mission.
-
-It does NOT normally implement individual features itself.
-
-Its responsibilities are:
-
-- understand the overall goal
-- inspect the repository/project
-- collaboratively build the mission plan
-- identify relevant project instructions and skills
-- decompose the goal into features
-- establish feature dependencies
-- organize features into meaningful milestones
-- define success criteria
-- define validation criteria
-- determine what can run concurrently
-- select ready work
-- launch workers
-- monitor workers
-- receive worker results
-- inspect actual resulting repository state
-- track commits/diffs
-- detect failed or stalled work
-- retry intelligently
-- create corrective/fix features when needed
-- trigger milestone validation
-- process validator findings
-- replan if reality diverges from the original plan
-- maintain mission state
-- expose progress to the user
-- pause
-- resume
-- accept steering instructions
-- complete the mission only after final validation
-
-The orchestrator is the authority for scheduling and state transitions.
-
-Workers do not independently rewrite the Mission plan.
-
----
-
-## B. FEATURE WORKERS
-
-A feature worker receives a tightly scoped feature.
-
-Each worker runs in an isolated/fresh Goose context.
-
-It should receive only the context needed to accomplish the feature, including:
-
-- overall mission objective
-- milestone objective
-- feature description
-- dependencies already completed
-- feature acceptance criteria
-- known architectural constraints
-- relevant repository instructions
-- relevant AGENTS.md / .goosehints / skills
-- paths/files likely involved
-- required verification
-- Git/worktree information
-- explicit definition of what it MUST NOT change
-
-The worker is expected to:
-
-1. inspect relevant code
-2. implement the feature
-3. run appropriate tests/checks
-4. inspect its own diff
-5. correct obvious problems
-6. provide a structured result
-7. commit or otherwise produce an atomic identifiable changeset if Git integration is being used
-
-A worker MUST NOT mark its own feature finally accepted merely because it claims success.
-
-The orchestrator and validators determine acceptance.
-
----
-
-## C. VALIDATORS
-
-There should be two conceptually separate validation roles.
-
-### Scrutiny Validator
-
-This validator treats completed implementation skeptically.
-
-It checks things such as:
-
-- whether the feature really exists
-- whether acceptance criteria are met
-- correctness
-- regressions
-- architecture violations
-- test coverage
-- lint/type/build results
-- security problems
-- error handling
-- edge cases
-- incomplete implementations
-- mocks/placeholders/TODOs masquerading as finished code
-- integration with previously completed work
-
-It should inspect the actual code/diff/repository rather than merely reading the worker's summary.
-
-### User-Testing Validator
-
-For applications that can be exercised, this validator verifies behavior from the user's perspective.
-
-Possible mechanisms include:
-
-- browser automation
-- HTTP/API calls
-- TUI automation
-- CLI invocation
-- integration scripts
-- application startup scripts
-- test fixtures
-- screenshots or rendered output where supported
-
-The point is:
-
-**Do not trust "tests passed" as proof that the feature works for a user.**
-
-User-facing validation should exercise the resulting application when practical.
-
-Allow each validation class to be individually disabled in configuration.
-
----
-
-# 3. PLANNING PHASE
-
-Planning is a first-class phase, not something hidden inside execution.
-
-Mission lifecycle should initially be:
+Example:
 
 ```text
 CREATED
@@ -270,41 +472,76 @@ CREATED
 → PLANNING
 → AWAITING_APPROVAL
 → RUNNING
+→ VALIDATING
+→ COMPLETED
 ```
 
-During PLANNING, do not edit application source code.
+Do not allow impossible or corrupt transitions such as resuming an already completed Mission.
 
-Repository inspection is allowed.
+---
 
-Planning should produce a structured Mission specification.
+# 9. THE ORCHESTRATOR
 
-Each proposed feature must be small enough that one isolated worker has a reasonable chance of completing it.
+The Mission orchestrator owns the overall Mission.
 
-Do not create meaningless microtasks such as:
+It should normally NOT implement individual features itself.
+
+Responsibilities:
+
+* understand the user goal
+* analyze the repository
+* discover project instructions
+* create the Mission plan
+* define milestones
+* define features
+* establish dependencies
+* define acceptance criteria
+* determine parallelizable work
+* schedule ready features
+* launch workers
+* monitor workers
+* reconcile results
+* inspect actual repository state
+* track commits/diffs
+* classify failures
+* retry intelligently
+* create corrective features
+* run milestone validation
+* process validator results
+* pause/resume
+* accept steering
+* replan when necessary
+* determine final Mission completion
+
+The orchestrator is the authority for scheduling and state transitions.
+
+Workers must not rewrite the Mission plan independently.
+
+---
+
+# 10. FEATURE MODEL
+
+Each feature should represent one understandable and verifiable unit of progress.
+
+Avoid useless microtasks such as:
 
 ```text
 create file
 add import
-write function
+write helper
 ```
 
-if those actions logically belong to one feature.
+when those actions logically belong to one feature.
 
-Likewise, do not create giant features such as:
+Also avoid giant vague features such as:
 
 ```text
-rewrite the backend
+rewrite backend
 ```
 
-if they should be decomposed.
+Features should be small enough for one isolated worker to have a reasonable chance of completing successfully.
 
-Features should represent independently understandable, verifiable units of progress.
-
----
-
-# 4. FEATURE MODEL
-
-Every feature should persist fields equivalent to:
+Persist fields conceptually equivalent to:
 
 ```yaml
 id: F001
@@ -344,8 +581,8 @@ worker:
   session_id: null
   started_at: null
   completed_at: null
-  model: null
   provider: null
+  model: null
 
 git:
   branch: null
@@ -358,8 +595,6 @@ result:
   tests: []
   notes: []
 ```
-
-Exact serialization format may change, but the concepts must remain.
 
 Suggested feature states:
 
@@ -376,15 +611,11 @@ CANCELLED
 SUPERSEDED
 ```
 
-State transitions must be deliberate and persisted.
-
 ---
 
-# 5. MILESTONE MODEL
+# 11. MILESTONES
 
-Milestones are validation boundaries.
-
-A milestone groups related features into a meaningful project checkpoint.
+Milestones should be meaningful integration and validation boundaries.
 
 Example:
 
@@ -393,7 +624,7 @@ Milestone 1
 Foundation and data model
 
 Milestone 2
-API implementation
+Backend implementation
 
 Milestone 3
 Frontend integration
@@ -402,16 +633,16 @@ Milestone 4
 Production hardening
 ```
 
-A milestone should include:
+Each milestone should track:
 
-- objective
-- ordered/dependency-aware feature set
-- entry requirements
-- completion criteria
-- validation criteria
-- status
-- scrutiny result
-- user-testing result
+* objective
+* features
+* dependencies
+* entry requirements
+* completion criteria
+* scrutiny-validation status
+* user-testing status
+* overall status
 
 Suggested states:
 
@@ -424,74 +655,144 @@ FAILED
 BLOCKED
 ```
 
-The next milestone should normally not advance past a failed validation gate.
+Do not automatically advance to the next milestone after failed required validation.
 
 ---
 
-# 6. DEPENDENCY-AWARE SCHEDULER
-
-Build a real scheduler.
+# 12. DEPENDENCY-AWARE SCHEDULER
 
 Represent feature dependencies as a DAG where practical.
 
-A feature becomes READY only when all required dependencies are accepted.
+A feature becomes `READY` only when all required dependencies have been accepted.
 
-The orchestrator should find READY features and schedule independent ones concurrently.
+The scheduler should:
 
-Configuration must contain:
+1. determine ready features
+2. determine whether any ready features conflict
+3. schedule safe independent work concurrently
+4. respect the concurrency ceiling
+5. wait for dependencies when required
+
+Default:
 
 ```yaml
 max_concurrent_workers: 2
 ```
 
-Default this to **2**.
+This MUST be configurable.
 
-The value must be configurable.
+Two workers is the default because the system needs to behave well with providers that limit concurrent requests.
 
-Do NOT equate concurrency with correctness.
+Do not blindly parallelize everything that lacks an explicit dependency.
 
-If two features could modify overlapping areas or otherwise conflict, schedule them sequentially even if their dependency graph technically allows parallel execution.
+Before parallel dispatch, consider:
 
-Add a conflict-risk check before parallel dispatch.
+* overlapping files
+* shared components
+* schema migrations
+* shared configuration
+* architectural dependency
+* likely merge-conflict risk
+
+Schedule conflicting work sequentially.
 
 ---
 
-# 7. WORKER EXECUTION
+# 13. FEATURE WORKERS
 
-Investigate which of these implementations is most reliable with CURRENT Goose and choose accordingly:
+Each worker receives a tightly scoped feature in a fresh or isolated Goose context.
 
-### Option A: Native parent-session delegation
+A worker should receive only relevant context, including:
 
-Parent Mission orchestrator uses Goose's async `delegate()` facility.
+* overall Mission objective
+* current milestone objective
+* feature objective
+* completed dependencies
+* acceptance criteria
+* architectural constraints
+* repository instructions
+* relevant AGENTS.md
+* relevant `.goosehints`
+* relevant skills
+* relevant Recipes
+* likely affected paths
+* prohibited paths
+* required test/build commands
+* Git/worktree information
 
-### Option B: Managed Goose worker processes
+The worker should:
 
-Mission controller launches isolated workers with something conceptually similar to:
+1. inspect relevant code
+2. implement the feature
+3. run appropriate verification
+4. inspect its own diff
+5. correct obvious defects
+6. produce a structured result
+7. create an identifiable changeset/commit when Git integration is enabled
+
+Workers must NOT mark themselves finally accepted simply because they claim success.
+
+Acceptance belongs to the Mission orchestrator and validators.
+
+---
+
+# 14. WORKER EXECUTION STRATEGY
+
+Investigate and choose the most reliable mechanism supported by CURRENT Goose.
+
+Possible approaches:
+
+## A. Native delegation
+
+Parent orchestrator uses Goose delegation.
+
+## B. Managed isolated Goose processes
+
+Conceptually:
 
 ```bash
 goose run \
-  --provider <worker-provider> \
-  --model <worker-model> \
-  --max-turns <worker-max-turns> \
+  --provider <provider> \
+  --model <model> \
+  --max-turns <limit> \
   --output-format json \
   ...
 ```
 
-### Option C: Goose internal/platform API
+Use actual supported current arguments.
 
-Use only if legitimately required and supported.
+## C. Supported Goose internal/platform interface
 
-Whichever architecture is chosen, workers must be individually identifiable and independently observable.
+Use only if publicly supported and clearly preferable.
 
-Do not fake worker isolation by asking one context to role-play several workers.
+Whichever architecture is chosen:
+
+* workers must be isolated
+* workers must be individually identifiable
+* worker output must be observable
+* workers must not rely on nested delegation
+* crashes must be detectable
+* workers must be cancellable
+
+Do not simulate multiple workers inside one conversational context.
 
 ---
 
-# 8. GIT IS THE SOURCE OF TRUTH FOR CODE MISSIONS
+# 15. GIT AS SOURCE OF TRUTH
 
-For Git repositories, use Git as the authoritative record of implementation changes.
+For Git repositories, Git should be the authoritative record of implementation changes.
 
-Prefer isolated branches/worktrees for concurrently executing features if practical.
+Before execution:
+
+* inspect Git status
+* detect current branch
+* determine base commit
+* detect uncommitted user changes
+* persist repository state
+
+Never discard existing user modifications.
+
+For concurrent features, prefer isolated branches/worktrees when practical.
 
 Conceptually:
 
@@ -502,76 +803,104 @@ mission/F002
 mission/F003
 ```
 
-or equivalent worktrees.
+Associate worker results with actual commits/diffs.
 
-The exact implementation should respect existing repository state and must not destroy uncommitted user work.
+Verify:
 
-Before Mission execution:
-
-- inspect Git status
-- identify current branch
-- identify base commit
-- detect dirty working state
-- persist this information
-
-Do not silently discard existing modifications.
-
-When worker work completes, associate its result with identifiable commits/diffs.
-
-The orchestrator should integrate changes deterministically.
+* expected files changed
+* unexpected files were not changed
+* commits exist when expected
+* worker output matches repository reality
 
 Handle:
 
-- merge conflicts
-- stale worker branches
-- overlapping edits
-- failed commits
-- worker exit without changes
-- worker claiming completion with unexpected changes
+* merge conflicts
+* stale branches
+* overlapping edits
+* failed commits
+* workers exiting without meaningful changes
+* workers claiming success with incorrect changes
 
-A Mission must never declare a feature complete merely because a worker emitted "done."
+A worker saying `done` is not evidence that a feature is complete.
 
-Verify the repository.
+Inspect the repository.
 
 ---
 
-# 9. MILESTONE VALIDATION
+# 16. VALIDATORS
 
-When all required features in a milestone are apparently complete:
+Use two conceptually separate validation roles.
+
+## Scrutiny Validator
+
+This validator should distrust worker claims and inspect the actual result.
+
+Check:
+
+* feature actually exists
+* acceptance criteria
+* correctness
+* regressions
+* architecture violations
+* tests
+* lint/typechecking/build
+* security problems
+* error handling
+* edge cases
+* incomplete implementation
+* placeholder code
+* TODOs masquerading as finished work
+* integration with earlier features
+
+It should inspect code/diffs/repository state, not merely worker summaries.
+
+## User-Testing Validator
+
+Where the application can be exercised, validate it from the user's perspective.
+
+Possible mechanisms:
+
+* browser automation
+* CLI execution
+* API calls
+* integration tests
+* startup scripts
+* HTTP testing
+* TUI automation
+* screenshots/rendered output
+* application-driving tools
+
+The principle is:
+
+**Passing unit tests does not automatically prove that a user-facing feature works.**
+
+Allow each validation type to be enabled/disabled in configuration.
+
+---
+
+# 17. MILESTONE VALIDATION
+
+When all required features in a milestone appear complete:
 
 ```text
-Milestone
 RUNNING
 → VALIDATING
 ```
 
-Run:
-
-```text
-Scrutiny Validator
-User-Testing Validator
-```
-
-where enabled.
-
-These should be fresh independent contexts.
+Run fresh validator contexts.
 
 Validators should receive:
 
-- mission objective
-- milestone objective
-- feature acceptance criteria
-- base revision
-- resulting revision
-- relevant test commands
-- known user flows
-- repository context
+* Mission objective
+* milestone objective
+* relevant feature acceptance criteria
+* base revision
+* resulting revision
+* test/build commands
+* expected user flows
+* repository context
 
-They should independently examine the actual result.
-
-Their output should be structured.
-
-Example:
+Return structured results such as:
 
 ```json
 {
@@ -580,10 +909,10 @@ Example:
   "findings": [
     {
       "feature": "F003",
-      "criterion": "...",
-      "problem": "...",
+      "criterion": "OAuth callback state must persist",
+      "problem": "Callback state is stored only in memory",
       "evidence": "...",
-      "recommended_fix": "..."
+      "recommended_fix": "Persist state in the configured session store"
     }
   ]
 }
@@ -591,75 +920,104 @@ Example:
 
 ---
 
-# 10. SELF-CORRECTION
+# 18. AUTOMATIC CORRECTIVE WORK
 
-Validation failures are not immediately fatal.
+Validation failure should not immediately terminate a Mission.
 
-If validation identifies a correctable issue, the orchestrator should create one or more targeted corrective features.
+When a validator finds a correctable defect, create one or more targeted fix features.
 
-For example:
+Example:
 
 ```text
 F007 Add OAuth login
-    completed
+COMPLETED
 
 Validation:
-    FAIL — callback state is not persisted
+FAIL
+Callback state is not persisted.
 
-Automatically create:
+Create:
 
 F007-FIX1
-Persist and validate OAuth callback state
+Persist and validate OAuth callback state.
 ```
 
-Corrective features enter the dependency graph like ordinary features.
+Corrective features should participate in the dependency graph like normal features.
 
-After they complete, rerun the affected validation.
+After corrective work completes:
 
-Set finite retry limits.
+* rerun affected validation
+* keep finite retry limits
+* include prior failure evidence in retry context
+* change strategy rather than blindly repeating identical instructions
 
-Do not endlessly ask workers to "try again."
+After repeated failure, mark the feature or milestone `BLOCKED` and explain precisely why.
 
-A retry should include the prior failure evidence and change strategy.
-
-After repeated failure, mark the feature/milestone BLOCKED and explain precisely why.
+Never retry forever.
 
 ---
 
-# 11. PAUSE, RESUME AND CRASH RECOVERY
+# 19. FAILURE CLASSIFICATION
 
-Mission state must persist outside the LLM context.
+Distinguish at minimum:
 
-Do not depend on conversation memory for Mission correctness.
+```text
+MODEL_FAILURE
+PROVIDER_FAILURE
+WORKER_TIMEOUT
+WORKER_CRASH
+IMPLEMENTATION_FAILURE
+TEST_FAILURE
+VALIDATION_FAILURE
+MERGE_CONFLICT
+DEPENDENCY_FAILURE
+USER_BLOCKED
+INFRASTRUCTURE_FAILURE
+```
 
-Persist sufficient state after every meaningful transition.
+Recovery behavior should depend on the failure.
 
-A Mission interrupted by:
+Examples:
 
-- user closing Goose
-- terminal shutdown
-- worker crash
-- machine restart
-- model/provider failure
+* provider HTTP failure does not prove implementation failure
+* test failure should result in corrective coding context
+* merge conflict requires Git reconciliation
+* worker crash may be safely retryable
+* missing user information may require `USER_BLOCKED`
 
-must be resumable.
+Persist the classification in Mission history.
+
+---
+
+# 20. PAUSE, RESUME AND CRASH RECOVERY
+
+Mission state must persist outside the model context.
+
+A Mission should survive:
+
+* closing Goose
+* terminal shutdown
+* worker crash
+* Goose restart
+* machine restart
+* provider failure
 
 On resume:
 
 1. load persisted Mission
-2. inspect repository/Git reality
-3. reconcile any workers that were RUNNING
+2. inspect repository reality
+3. reconcile workers previously marked `RUNNING`
 4. determine whether work actually completed
-5. recover known commits/results if possible
-6. return interrupted tasks to READY when safe
+5. recover known commits/results
+6. return interrupted work to `READY` when safe
 7. continue from the last valid state
 
 Use atomic persistence.
 
-Prefer a design such as:
+A design similar to this is reasonable:
 
 ```text
-<repo>/.goose/missions/
+<repo>/.goose/hamgoose/
     <mission-id>/
         mission.yaml
         state.sqlite
@@ -670,17 +1028,17 @@ Prefer a design such as:
         validation/
 ```
 
-Exact structure is negotiable.
+Exact structure may differ.
 
-A small SQLite state database plus human-readable exported YAML/Markdown/event logs would be a strong design.
+A small SQLite database plus human-readable YAML/Markdown/event logs is preferred if appropriate.
 
-Do not commit transient Mission runtime logs unless explicitly configured.
+Do not commit runtime logs into the user's repository unless explicitly configured.
 
 ---
 
-# 12. EVENT LOG
+# 21. EVENT LOG
 
-Maintain an append-only Mission event stream.
+Maintain an append-only Mission event history.
 
 Examples:
 
@@ -704,28 +1062,29 @@ VALIDATION_PASSED
 MILESTONE_COMPLETED
 MISSION_PAUSED
 MISSION_RESUMED
+MISSION_STEERED
 MISSION_REPLANNED
 MISSION_COMPLETED
 MISSION_CANCELLED
 ```
 
-Every event should contain:
+Each event should include:
 
-- timestamp
-- mission ID
-- event type
-- relevant entity ID
-- concise data payload
+* timestamp
+* Mission ID
+* event type
+* related entity ID
+* concise structured payload
 
-This allows deterministic status reconstruction and troubleshooting.
+This should make debugging and state reconstruction possible.
 
 ---
 
-# 13. USER STEERING
+# 22. STEERING AND REPLANNING
 
 Running Missions must remain steerable.
 
-Support behavior conceptually equivalent to:
+Support equivalents of:
 
 ```text
 mission pause
@@ -736,46 +1095,48 @@ mission replan "<instruction>"
 mission cancel
 ```
 
-The exact interface may instead be MCP tools or natural-language operations.
+Natural-language invocation through Goose is acceptable as long as reliable MCP operations exist underneath it.
 
-Important distinction:
+## STEER
 
-### STEER
-
-Changes implementation guidance or priority without necessarily rebuilding the whole plan.
+Changes implementation guidance or scheduling priority without necessarily rebuilding the Mission plan.
 
 Example:
 
 ```text
-Prioritize the REST API before the web dashboard.
+Prioritize the API before the dashboard.
 ```
 
-### REPLAN
+## REPLAN
 
-Pause execution and deliberately revise the Mission graph.
+Deliberately revises remaining Mission structure.
 
 Example:
 
 ```text
-We are no longer using PostgreSQL. Replan the remaining work around SQLite.
+We are no longer using PostgreSQL.
+Replan the remaining work around SQLite.
 ```
 
-Replanning must:
+Replanning should:
 
-- preserve historical state
-- preserve completed work where still valid
-- identify invalidated features
-- mark replaced work SUPERSEDED when appropriate
-- create a new plan revision
-- request approval if the scope changes materially
+* pause scheduling
+* preserve Mission history
+* preserve completed work that remains valid
+* identify invalidated work
+* mark replaced work `SUPERSEDED`
+* create a new plan revision
+* request approval again if the scope changes materially
 
 Never silently rewrite Mission history.
 
 ---
 
-# 14. MISSION CONFIGURATION
+# 23. CONFIGURATION
 
-Support per-Mission/default configuration including:
+Support sensible defaults with per-Mission override.
+
+Conceptually:
 
 ```yaml
 orchestrator:
@@ -807,126 +1168,115 @@ git:
   auto_commit_features: true
 ```
 
-Use the actual settings supported by the installed Goose version.
+Use actual settings supported by current Goose.
 
-Do not invent unsupported "reasoning effort" settings.
+Do not invent unsupported settings.
 
-If Goose/provider APIs expose controllable reasoning effort, support it cleanly.
+If provider/model-specific reasoning effort is supported, expose it cleanly.
 
-Otherwise omit it rather than pretending it works.
+If not, omit it.
 
-The important capability is separately configurable:
+The important requirement is separate configuration for:
 
-- orchestrator model
-- feature-worker model
-- validator model
-
----
-
-# 15. PROJECT INSTRUCTIONS AND SKILLS
-
-Mission workers must not lose project-specific behavior.
-
-Before execution, discover relevant:
-
-- AGENTS.md files
-- .goosehints
-- Goose skills
-- custom agents
-- Recipes
-- repository docs
-- test instructions
-- lint/build conventions
-
-Pass relevant context explicitly into workers.
-
-Do NOT assume a delegated worker automatically inherits every piece of parent context.
-
-Context should be intentionally assembled.
-
-Keep worker prompts scoped enough that the feature itself remains prominent.
+* orchestrator model
+* worker model
+* validator model
 
 ---
 
-# 16. READINESS/PREFLIGHT CHECK
+# 24. PROJECT INSTRUCTIONS AND SKILLS
 
-Implement a light Mission-readiness check.
+Before planning/execution, discover relevant project-specific instructions:
 
-It does not need to clone Factory's proprietary scoring system.
+* AGENTS.md
+* `.goosehints`
+* Goose skills
+* Recipes
+* custom agents
+* repository documentation
+* build instructions
+* test instructions
+* lint conventions
+* startup procedures
 
-Before running a large code Mission, detect whether the project exposes:
+Pass only relevant context to each worker.
 
-- source control
-- build command
-- test command
-- lint/typecheck where applicable
-- dependency installation procedure
-- app startup procedure
-- useful logs
-- integration/E2E tests
-- user-facing QA mechanism
-- AGENTS.md/project guidance
-- dirty Git state
+Do not assume isolated workers automatically inherit everything from the parent session.
 
-Report limitations.
+Context must be intentionally assembled.
+
+---
+
+# 25. READINESS / PREFLIGHT
+
+Before running a significant Mission, inspect project readiness.
+
+Report:
+
+```text
+HAMGOOSE READINESS
+
+Git                  PASS
+Build command        PASS
+Unit tests           PASS
+Lint/typecheck       PASS
+App startup          PASS
+User-flow automation WARN
+Project instructions PASS
+Dirty working tree   WARN
+```
+
+Check for:
+
+* source control
+* build command
+* test command
+* lint/typecheck
+* dependency installation
+* application startup
+* useful logging
+* integration/E2E tests
+* browser/user-flow automation
+* project guidance
+* dirty Git state
+
+Warnings should not automatically block execution unless they make the Mission unsafe or impossible.
+
+---
+
+# 26. PLAN VALIDATION
+
+Before presenting the plan for approval, inspect the plan itself.
+
+Check for:
+
+* dependency cycles
+* vague features
+* oversized features
+* meaningless micro-features
+* vague acceptance criteria
+* impossible validation requirements
+* missing integration work
+* dangerous parallel conflicts
+* poor milestone boundaries
+* hidden requirements implied by the user's goal
+
+Fix plan defects before asking for approval.
+
+---
+
+# 27. MISSION CONTROL
+
+CLI/text status is mandatory.
 
 Example:
 
 ```text
-Mission readiness
-
-Git                  PASS
-Unit tests           PASS
-Build command        PASS
-App startup          PASS
-User-flow automation WARN
-Logs                 PASS
-
-User-facing validation may be limited because no automated browser
-or application-driving mechanism was discovered.
-```
-
-A warning should not automatically prohibit the Mission unless execution would be unsafe or impossible.
-
----
-
-# 17. DRY-RUN PLAN VALIDATION
-
-Before asking for plan approval, inspect the proposed plan itself.
-
-Check:
-
-- dependency cycles
-- vague acceptance criteria
-- impossible validation requirements
-- oversized features
-- meaningless micro-features
-- missing integration work
-- conflicting parallel tasks
-- milestones with no useful validation boundary
-- hidden requirements implied by the requested outcome
-
-Correct planning problems before presenting the plan.
-
-The user should approve a plan that the orchestrator itself believes is executable.
-
----
-
-# 18. MISSION CONTROL OUTPUT
-
-CLI/text support is mandatory.
-
-A visual dashboard is desirable if CURRENT Goose MCP Apps can support it without compromising the core implementation.
-
-Text status should provide something similar to:
-
-```text
-GOOSE MISSION CONTROL
+HAMGOOSE MISSION CONTROL
 
 Mission: M-2026-001
-Goal: Replace legacy auth system
+Goal: Replace legacy authentication
 Status: RUNNING
-Elapsed: 01:42:18
 
 Milestone 2/4
 API Migration
@@ -947,231 +1297,150 @@ COMPLETED
 F001 F002 F003 F004 F005 F006 F007
 
 Workers
-W-17 F008 running  11m
-W-18 F009 running   8m
+W-17  F008  running
+W-18  F009  running
 
-Last validation
+Validation
 Milestone 1: PASSED
 
 Recent events
 ...
 ```
 
-If MCP Apps are sufficiently mature, create a Mission Control dashboard showing:
+If current Goose MCP Apps support it cleanly, optionally add a visual Mission Control dashboard showing:
 
-- overall progress
-- milestone progress
-- feature states
-- dependency relationships
-- worker status
-- validator status
-- event log
-- pause button
-- resume button
-- cancel button
-- steering input
-- feature details
-- commit/diff references
+* Mission progress
+* milestone progress
+* feature states
+* dependency relationships
+* worker status
+* validation status
+* event history
+* pause/resume
+* cancel
+* steering input
+* feature detail
+* commit/diff references
 
-Do not allow dashboard work to delay or destabilize the orchestration core.
+Do NOT prioritize UI over orchestration correctness.
 
-Core first, UI second.
+Core runtime first.
 
----
-
-# 19. REQUIRED MCP/USER OPERATIONS
-
-Design a clean API.
-
-Exact names may differ, but the system needs equivalents of:
-
-```text
-mission_create
-mission_analyze
-mission_plan
-mission_get_plan
-mission_revise_plan
-mission_approve
-mission_run
-mission_pause
-mission_resume
-mission_status
-mission_list
-mission_get
-mission_steer
-mission_replan
-mission_cancel
-mission_retry_feature
-mission_validate
-mission_events
-```
-
-Avoid exposing dozens of tiny internal implementation functions to the model if fewer high-level tools are more reliable.
-
-Keep the tool interface difficult for an LLM to misuse.
-
-Validate all state transitions server-side.
-
-For example, calling `mission_resume` on COMPLETED should return a meaningful error rather than corrupting state.
+UI second.
 
 ---
 
-# 20. ORCHESTRATOR CONTROL LOOP
+# 28. ORCHESTRATOR CONTROL LOOP
 
-The Mission runner should behave roughly like this:
+The runtime should conceptually behave like:
 
 ```text
 while mission is RUNNING:
 
     reconcile repository and worker reality
 
-    if active worker failed:
-        classify failure
-        retry/replan/block as appropriate
+    process finished workers
 
-    collect completed workers
+    classify failures
 
     verify resulting changes
 
-    transition successful features toward COMPLETED
+    transition successful features
 
-    if milestone implementation complete:
-        run milestone validators
+    if milestone implementation is complete:
+        run validators
 
         if validation passes:
-            close milestone
-            advance
-
+            complete milestone
         else:
             create corrective features
-            continue milestone
 
-    compute dependency-ready features
+    compute dependency-ready work
 
-    dispatch safe independent work
-        while active_workers < max_concurrent_workers
+    while active_workers < max_concurrent_workers:
+        dispatch safe independent features
 
-    if nothing runnable:
+    if nothing can run:
         determine whether:
-            mission completed
-            mission blocked
-            worker still running
-            validation pending
-            dependency graph invalid
+            mission is complete
+            mission is blocked
+            workers are still active
+            validation is pending
+            dependency graph is invalid
 
     persist state
 
-    emit events
+    append events
 ```
 
-This control logic should be deterministic code where reasonable.
-
-Do not make the LLM responsible for remembering all Mission state.
-
-Use the model for semantic decisions, planning, coding, review and replanning.
-
-Use software for:
-
-- persistence
-- state transitions
-- retries
-- IDs
-- dependency tracking
-- scheduling limits
-- timestamps
-- process management
-- event logging
+Keep this control flow deterministic where practical.
 
 ---
 
-# 21. FAILURE CLASSIFICATION
+# 29. RESOURCE CONTROL
 
-Distinguish at least:
+Prevent runaway Missions.
 
-```text
-MODEL_FAILURE
-PROVIDER_FAILURE
-WORKER_TIMEOUT
-WORKER_CRASH
-IMPLEMENTATION_FAILURE
-TEST_FAILURE
-VALIDATION_FAILURE
-MERGE_CONFLICT
-DEPENDENCY_FAILURE
-USER_BLOCKED
-INFRASTRUCTURE_FAILURE
-```
+Support:
 
-Different failures deserve different recovery behavior.
+* maximum concurrent workers
+* maximum feature attempts
+* maximum turns per worker
+* optional worker timeout
+* graceful cancellation
+* graceful shutdown
+* subprocess cleanup
+* optional Mission-level resource/budget ceiling if practical
 
-A provider HTTP error should not be treated as proof the feature implementation is defective.
-
-A test failure should not be blindly retried with identical instructions.
-
-A merge conflict requires repository reconciliation.
-
-Record failure classifications in Mission history.
+Never leave zombie Goose worker processes after cancellation.
 
 ---
 
-# 22. RESOURCE CONTROL
+# 30. SECURITY
 
-Missions can run for a long time.
+Respect Goose's existing security model.
 
-Add guards against runaway behavior:
+Do not bypass:
 
-- max concurrent workers
-- max attempts per feature
-- max turns per worker
-- optional worker timeout
-- optional mission-level budget/run ceiling if practical
-- cancellation support
-- graceful shutdown
-- subprocess cleanup
+* tool permissions
+* sandbox settings
+* extension restrictions
+* repository boundaries
 
-Never leave zombie Goose workers behind after cancellation.
+Workers should receive only necessary capabilities.
 
----
+Do not persist secrets into Mission logs.
 
-# 23. SECURITY AND PERMISSIONS
+Redact obvious:
 
-Do not bypass Goose's existing security model simply to make Missions autonomous.
+* API keys
+* access tokens
+* passwords
+* bearer tokens
+* credentials
 
-Respect:
-
-- configured tool permissions
-- sandbox configuration
-- extension restrictions
-- repository boundaries
-
-Workers should get the tools they need, not automatically every possible dangerous capability.
-
-Never print secrets into Mission logs.
-
-Redact obvious API keys/tokens from persisted worker output.
+from stored worker output.
 
 ---
 
-# 24. ACCEPTANCE TEST SUITE
+# 31. INTEGRATION TEST SUITE
 
-Do not declare this project complete until you test the Mission system itself.
+Do not declare `hamgoose` complete based only on unit tests.
 
-Create a small fixture repository/application specifically for Mission integration testing.
+Create a small fixture project and test the real orchestration path.
 
 Required scenarios:
 
-### Scenario A — Planning gate
-
-Create a Mission.
+## A. Planning gate
 
 Verify:
 
-- repository analyzed
-- plan produced
-- features/milestones persisted
-- no implementation occurs before approval
+* repository analyzed
+* plan created
+* features/milestones persisted
+* no implementation occurs before approval
 
-### Scenario B — Dependencies
+## B. Dependencies
 
 Create:
 
@@ -1181,118 +1450,128 @@ F002
 F003 depends on F001
 ```
 
-Verify F003 cannot run before F001 completes.
+Verify F003 cannot run before F001.
 
-### Scenario C — Parallel workers
+## C. Parallel workers
 
 Create two independent features.
 
-Verify up to two workers execute concurrently.
+Verify both can run concurrently.
 
-Verify the configured concurrency limit is never exceeded.
+Verify the default concurrency limit of 2 is never exceeded.
 
-### Scenario D — Worker failure
+## D. Worker failure
 
-Deliberately make one worker fail.
+Deliberately cause a worker failure.
 
 Verify:
 
-- failure recorded
-- attempt incremented
-- appropriate retry occurs
-- Mission itself does not corrupt or disappear
+* failure recorded
+* attempt incremented
+* recovery/retry occurs
+* Mission state remains valid
 
-### Scenario E — Validator catches worker defect
+## E. Validator catches defect
 
-Have a worker produce intentionally incomplete code.
+Have a worker create intentionally incomplete implementation.
 
-Validator must reject it.
+Verify:
 
-Mission should create corrective work.
+* validator rejects it
+* corrective feature is created
+* corrective worker runs
+* validation reruns
 
-Corrective work should run.
-
-Validation should rerun.
-
-### Scenario F — Pause/resume
+## F. Pause/resume
 
 Pause an active Mission.
 
-Verify no new workers start.
+Verify:
 
-Restart the Mission system.
+* no new workers launch
+* state persists
+* restart `hamgoose`
+* Mission resumes correctly
 
-Resume it.
+## G. Process interruption
 
-Verify state is preserved.
-
-### Scenario G — Process interruption
-
-Terminate Mission controller while work is in progress.
+Terminate the Mission controller while work is active.
 
 Restart.
 
 Verify state reconciliation.
 
-### Scenario H — Steering
+## H. Steering
 
-Change priority while Mission is active.
+Change priorities while running.
 
-Verify scheduler obeys the updated priority.
+Verify scheduler honors updated priorities.
 
-### Scenario I — Replanning
+## I. Replanning
 
 Change a major requirement.
 
 Verify:
 
-- Mission pauses
-- remaining plan changes
-- completed valid work remains
-- invalidated work is recorded
-- history remains intact
+* execution pauses
+* plan revision occurs
+* valid completed work remains
+* invalid work becomes superseded where appropriate
+* history is preserved
 
-### Scenario J — Git conflict
+## J. Git conflict
 
-Create overlapping worker edits.
+Cause overlapping changes.
 
-Verify conflict is detected and handled rather than silently overwriting changes.
+Verify conflict is detected and resolved safely rather than overwritten.
 
-### Scenario K — Final validation
+## K. Final validation
 
-Mission must not report COMPLETED until final required validation has passed.
+Mission must not report `COMPLETED` until all required final validation passes.
+
+## L. Nested delegation constraint
+
+Verify worker execution does not depend on worker-created nested delegates.
 
 ---
 
-# 25. TESTING YOUR GOOSE INTEGRATION
+# 32. TEST THROUGH REAL GOOSE
 
-Because this is an extension to Goose itself, test using REAL Goose invocation wherever reasonably possible.
-
-Do not stop at unit tests of the Mission database.
-
-Test:
+Testing must include the actual Goose integration path:
 
 ```text
 Goose
-→ Mission extension
-→ orchestrator
-→ actual worker Goose session
-→ actual repository modification
-→ validator
-→ Mission completion
+  ↓
+hamgoose
+  ↓
+Mission orchestrator
+  ↓
+real isolated Goose worker
+  ↓
+real repository modification
+  ↓
+validator
+  ↓
+Mission completion
 ```
 
-This is the important integration path.
+Also verify:
 
-Also test the case where a worker attempts nested delegation.
+1. `hamgoose` starts correctly
+2. Goose discovers it
+3. Goose discovers its MCP capabilities
+4. Mission operations work from an actual Goose session
+5. Goose can restart
+6. `hamgoose` reconnects correctly
+7. Mission state survives restart
 
-The Mission architecture must not rely on nested delegate access.
+Do not consider standalone MCP-server testing sufficient.
 
 ---
 
-# 26. DOCUMENTATION
+# 33. DOCUMENTATION
 
-Produce:
+Produce at minimum:
 
 ```text
 README.md
@@ -1302,176 +1581,140 @@ CONFIGURATION.md
 TESTING.md
 ```
 
-README should include the shortest possible working example.
+README should contain the shortest possible working example.
 
 Document:
 
-- installation
-- enabling the extension
-- starting a Mission
-- approving a Mission
-- checking status
-- pausing
-- resuming
-- steering
-- replanning
-- cancelling
-- model configuration
-- concurrency configuration
-- validation options
-- persistence location
-- Git behavior
-- limitations
+* installation
+* Goose registration
+* starting a Mission
+* plan approval
+* status inspection
+* pause
+* resume
+* steering
+* replanning
+* cancellation
+* model configuration
+* concurrency configuration
+* validation configuration
+* persistence location
+* Git/worktree behavior
+* crash recovery
+* known limitations
 
 ---
 
-# 27. IMPLEMENTATION PRIORITIES
+# 34. IMPLEMENTATION ORDER
 
-Build in this order:
+Build in roughly this order:
 
 ```text
-1. Goose capability investigation
-2. Architecture decision
-3. Mission persistent data model
-4. Mission state machine
-5. Planning workflow
-6. Approval gate
-7. Dependency scheduler
-8. Worker launching
-9. Worker result reconciliation
-10. Git isolation/integration
-11. Scrutiny validation
-12. User-testing validation
-13. Corrective feature loop
-14. Pause/resume
-15. Crash recovery
-16. Steering/replanning
-17. CLI/MCP status surfaces
-18. Integration test suite
-19. Documentation
-20. MCP App Mission Control dashboard if appropriate
+1. Read official Goose extension docs
+2. Inspect installed Goose
+3. Produce architecture/compliance report
+4. Create hamgoose extension skeleton
+5. Persistent Mission data model
+6. Mission state machine
+7. Planning workflow
+8. Approval gate
+9. Dependency scheduler
+10. Worker launching
+11. Worker result reconciliation
+12. Git/worktree integration
+13. Scrutiny validator
+14. User-facing validator
+15. Corrective feature loop
+16. Pause/resume
+17. Crash recovery
+18. Steering
+19. Replanning
+20. MCP Resources/Prompts refinements
+21. Mission Control CLI/status
+22. Integration test suite
+23. Documentation
+24. MCP App dashboard if appropriate
 ```
 
-Do not start with the UI.
+Do not start with the dashboard.
 
 ---
 
-# 28. DEFINITION OF DONE
+# 35. DEFINITION OF DONE
 
-This project is NOT done merely because:
+`hamgoose` is NOT complete merely because:
 
-- the extension loads
-- an MCP tool exists
-- one subagent can be launched
-- a Recipe runs
-- a plan can be generated
-- a Todo list is displayed
-- workers print successful summaries
+* the extension loads
+* MCP tools exist
+* a plan can be generated
+* a Recipe works
+* a Todo list is displayed
+* one worker can be launched
+* workers can print success messages
 
-It is done when this works:
+It is complete when this actually works:
 
 ```text
-USER GOAL
+USER REQUEST
    ↓
-COLLABORATIVE PLAN
+ANALYSIS
    ↓
-STRUCTURED FEATURES + MILESTONES
+PLAN
+   ↓
+FEATURE DAG
+   ↓
+MILESTONES
    ↓
 USER APPROVAL
    ↓
-DEPENDENCY-AWARE ORCHESTRATION
+AUTOMATIC DEPENDENCY-AWARE EXECUTION
    ↓
-ISOLATED FEATURE WORKERS
+ISOLATED WORKERS
    ↓
-REAL CODE/ARTIFACT OUTPUT
+REAL CHANGES
    ↓
-SCRUTINY VALIDATION
-   +
-USER-FACING VALIDATION
+INDEPENDENT VALIDATION
    ↓
-AUTOMATIC CORRECTION WHEN NEEDED
+AUTOMATIC CORRECTION
    ↓
-NEXT MILESTONE
+MILESTONE GATES
    ↓
-FINAL INTEGRATION VALIDATION
+FINAL VALIDATION
    ↓
-MISSION COMPLETED
+COMPLETED MISSION
 ```
 
-And throughout that process:
+And throughout the lifecycle the Mission can reliably:
 
 ```text
-persistent state
-Git traceability
+persist
 pause
 resume
-crash recovery
-steering
-replanning
-worker inspection
-bounded retries
-configurable models
-configurable concurrency
-event history
+recover
+steer
+replan
+retry
+validate
+track Git changes
+track workers
+track dependencies
+record events
 ```
-
-must actually function.
 
 ---
 
-# 29. IMPORTANT DESIGN PRINCIPLE
+# 36. BEGIN
 
-Build this as a real orchestration SYSTEM around Goose, not one enormous prompt asking Goose to behave like an orchestrator.
+Start by:
 
-Prompts should express semantic intent.
+1. reading the official Goose custom-extension documentation
+2. inspecting the installed Goose version and capabilities
+3. creating the `HAMGOOSE ARCHITECTURE REPORT`
+4. selecting the simplest architecture that fully adheres to Goose's supported extension model
+5. proceeding directly into implementation once compliance passes
 
-Code should enforce orchestration mechanics.
+Do not reduce this project into a simplistic Recipe, Todo wrapper or delegation prompt.
 
-The LLM should decide things such as:
+Build the actual orchestration layer.
 
-- how to decompose a project
-- how a feature should be implemented
-- whether an architectural adjustment makes sense
-- how to repair validation findings
-
-The runtime should decide things such as:
-
-- whether dependencies are satisfied
-- how many workers may run
-- which process belongs to which feature
-- whether a transition is legal
-- whether a retry limit has been reached
-- where state is persisted
-- which commit belongs to a worker
-- whether a Mission is paused
-- what happened before a restart
-
-Do not entrust deterministic bookkeeping to conversational memory.
-
----
-
-# 30. BEGIN
-
-Begin by investigating the installed Goose environment and repository/source interfaces.
-
-Create an architecture report before implementation containing:
-
-```text
-1. Goose version/environment discovered
-2. Available extension architecture
-3. Available delegation architecture
-4. Available headless/session APIs
-5. Persistence options
-6. Worker-isolation strategy
-7. Git/worktree strategy
-8. Chosen Mission architecture
-9. Components/files to create
-10. Risks/limitations
-11. Integration-test strategy
-```
-
-Then proceed to implementation without waiting for further permission unless you encounter a genuinely destructive or externally consequential operation that requires approval.
-
-Do not reduce this mission into a simplistic Recipe or Todo wrapper.
-
-Build the orchestration layer.
+**Project name: `hamgoose`.**

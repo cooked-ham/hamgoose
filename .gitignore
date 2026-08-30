@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# hamgoose runtime state (keep mission logs out of the repo)
+/.goose/hamgoose/
+
+# scratch / local
+*.log
+.tmp_*
+.dbg_*
+.mcp_smoke*

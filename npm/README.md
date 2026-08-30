@@ -1,4 +1,4 @@
-# @cookedham/hamgoose
+# @cooked-ham/hamgoose
 
 **npm launcher for [hamgoose](https://github.com/cooked-ham/hamgoose)** — Factory-Droid-style
 Mission orchestration for [Goose](https://goose-docs.ai): goal in, structured plan,
@@ -16,13 +16,13 @@ dependency-free launcher so the install works from the Node world too. It finds
 
 ```bash
 # install the Python package (idempotent; finds Python 3.11+, falls back to `py -3`)
-npx @cookedham/hamgoose install
+npx @cooked-ham/hamgoose install
 
 # install + register with Goose's config in one shot
-npx @cookedham/hamgoose register
+npx @cooked-ham/hamgoose register
 
 # run the MCP stdio server (what Goose spawns)
-npx -y @cookedham/hamgoose
+npx -y @cooked-ham/hamgoose
 ```
 
 ## Use it as a Goose extension
@@ -31,7 +31,7 @@ npx -y @cookedham/hamgoose
 `hamgoose`, Command:
 
 ```
-npx -y @cookedham/hamgoose
+npx -y @cooked-ham/hamgoose
 ```
 
 …or the equivalent `extensions:` entry in `config.yaml`. Then in any repo:

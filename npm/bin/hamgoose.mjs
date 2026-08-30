@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * @cookedham/hamgoose — npm launcher for the hamgoose Goose extension.
+ * @cooked-ham/hamgoose — npm launcher for the hamgoose Goose extension.
  *
  * hamgoose itself is a Python stdio MCP server (github.com/cooked-ham/hamgoose).
  * This package is a thin, dependency-free launcher with one job: make
- * `npx @cookedham/hamgoose` just work. It never contains mission logic.
+ * `npx @cooked-ham/hamgoose` just work. It never contains mission logic.
  *
- *   npx -y @cookedham/hamgoose            run the MCP stdio server (what Goose spawns)
- *   npx @cookedham/hamgoose install       install the Python package (idempotent)
- *   npx @cookedham/hamgoose register      install + register with Goose
- *   npx @cookedham/hamgoose --version     print version
+ *   npx -y @cooked-ham/hamgoose            run the MCP stdio server (what Goose spawns)
+ *   npx @cooked-ham/hamgoose install       install the Python package (idempotent)
+ *   npx @cooked-ham/hamgoose register      install + register with Goose
+ *   npx @cooked-ham/hamgoose --version     print version
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -114,13 +114,13 @@ function printHelp() {
 Runs the Python hamgoose server (github.com/cooked-ham/hamgoose).
 
 Usage:
-  npx -y @cookedham/hamgoose            run the MCP stdio server (what Goose spawns)
-  npx @cookedham/hamgoose install       install the Python package (idempotent)
-  npx @cookedham/hamgoose register      install + register with Goose's config
-  npx @cookedham/hamgoose --version     print version
+  npx -y @cooked-ham/hamgoose            run the MCP stdio server (what Goose spawns)
+  npx @cooked-ham/hamgoose install       install the Python package (idempotent)
+  npx @cooked-ham/hamgoose register      install + register with Goose's config
+  npx @cooked-ham/hamgoose --version     print version
 
 Use with Goose: Add Extension (STDIO), command:
-  npx -y @cookedham/hamgoose`);
+  npx -y @cooked-ham/hamgoose`);
 }
 
 const [, , ...args] = process.argv;

@@ -1,5 +1,5 @@
 {
-  "name": "@cookedham/hamgoose",
+  "name": "@cooked-ham/hamgoose",
   "version": "0.1.0",
   "description": "npm launcher for hamgoose — Factory-Droid-style Mission orchestration extension for Goose (goal → plan → approve → isolated workers → validated code)",
   "keywords": [
@@ -12,7 +12,7 @@
     "hamgoose"
   ],
   "license": "MIT",
-  "author": "cookedham",
+  "author": "cooked-ham",
   "homepage": "https://github.com/cooked-ham/hamgoose",
   "repository": {
     "type": "git",

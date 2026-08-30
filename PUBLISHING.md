@@ -48,3 +48,18 @@ pip install --dry-run hamgoose
 
 - Bump `version` in `pyproject.toml` (single source of truth).
 - Tag `v<version>` on the same commit so `pip install git+...@v<version>` pins work.
+- Keep `npm/package.json` `version` in sync (npm launcher, same release).
+
+## npm launcher (`@cooked-ham/hamgoose`)
+
+The `npm/` directory holds the Node launcher (lets Node-first machines use
+`npx @cooked-ham/hamgoose`). Publish with:
+
+```bash
+npm login
+cd npm
+npm publish --access public     # scoped packages default to private
+```
+
+It is a thin pointer to this repo — no code duplication, nothing to sync
+beyond the version number.

@@ -155,6 +155,7 @@ Requires `goose` (≥ 1.40) on your PATH and `git` (for Git missions).
 | **2. Goose's own menu** | No extra commands | `goose configure` → **Extensions → Add Extension** → STDIO / `hamgoose` / `hamgoose` |
 | **3. From a clone** | Contributors | `git clone … && cd hamgoose && uv venv .venv && uv pip install -p .venv -e .` then `hamgoose register` |
 | **4. Per-run** | One-off experiments | `goose run -t "..." --with-extension "hamgoose:python -m hamgoose"` |
+| **5. npm (Node world)** | Node-first machines | `npx @cooked-ham/hamgoose register` — installs + registers in one shot |
 
 > [!IMPORTANT]
 > Pin a release once tags exist:

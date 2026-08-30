@@ -1,50 +1,83 @@
-# hamgoose
+<div align="center">
 
-[![PyPI version](https://img.shields.io/pypi/v/hamgoose)](https://pypi.org/project/hamgoose/)
-[![Python](https://img.shields.io/pypi/pyversions/hamgoose)](https://pypi.org/project/hamgoose/)
+<pre>
+   _                          _ _
+  | |__   __ ___  __ ___   __| | | ___  _ __   ___
+  | '_ \ / _` \ \/ / _ \ / _` | |/ / _ \| '_ \ / __|
+  | |_) | (_| |>  <  __/ | (_| |   < (_) | | | | (__
+  |_.__/ \__,_/_/\_\___|  \__,_|_|\_\___/|_| |_|\___|
+</pre>
+
+**🦆 Factory-Droid-style Mission orchestration for [Goose](https://github.com/block/goose)**
+
+[![PyPI version](https://img.shields.io/pypi/v/hamgoose?color=neon)](https://pypi.org/project/hamgoose/)
+[![Python versions](https://img.shields.io/pypi/pyversions/hamgoose?color=blue)](https://img.shields.io/pypi/pyversions/hamgoose)
+[![PyPI downloads](https://img.shields.io/pypi/dm/hamgoose?color=green)](https://img.shields.io/pypi/dm/hamgoose)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Goose extension](https://img.shields.io/badge/Goose-extension-841697)](https://goose-docs.ai)
+[![Goose extension](https://img.shields.io/badge/Goose-extension-841697?logo=goose&logoColor=white)](https://goose-docs.ai)
+[![Code style: deterministic core](https://img.shields.io/badge/core-deterministic-orange)](#why-its-different)
 
-**Factory-Droid-style Mission orchestration for [Goose](https://github.com/block/goose).**
+[![GitHub stars](https://img.shields.io/github/stars/cooked-ham/hamgoose?style=social)](https://github.com/cooked-ham/hamgoose/stargazers)
 
-Type a goal, get a structured plan, approve it — then watch **isolated Goose
-workers** build it in Git worktrees, validated by skeptical reviewers,
-corrected automatically, and driven to a verified `COMPLETED` state.
+**Type a goal → get a structured plan → approve → watch isolated workers build it, get validated, get corrected — until it's done and proven.**
+
+</div>
 
 ```
 USER GOAL → ANALYSIS → STRUCTURED PLAN → FEATURES + DEPS + MILESTONES → APPROVAL
   → DEPENDENCY-AWARE EXECUTION (isolated workers) → REAL CODE
   → SCRUTINY + USER-FACING VALIDATION → AUTOMATIC CORRECTION
-  → FINAL VALIDATION → MISSION COMPLETED
+  → FINAL VALIDATION → MISSION COMPLETED ✅
 ```
 
-hamgoose is a genuine Goose **extension** — a standalone stdio MCP server built
-on the official `mcp`/`FastMCP` model, not a recipe, todo wrapper, or
-delegation prompt. **Code enforces the orchestration mechanics; models do the
-semantic reasoning.**
+hamgoose is a genuine Goose **extension** — a standalone stdio MCP server on the
+official `mcp`/`FastMCP` model, not a recipe, todo wrapper, or delegation
+prompt. **Code enforces the orchestration mechanics; models do the semantic
+reasoning.**
 
-## Why it's different
+---
 
-- **Approval gate.** Nothing is implemented until you approve the plan.
-- **Isolated leaf workers.** Each feature runs in its own `goose` subprocess
-  inside a Git worktree — no nested delegation, crash containment, real diffs.
-- **Dependency-aware scheduling.** A DAG of features with path-overlap conflict
-  detection and a hard concurrency cap (your provider's limits, enforced in code).
-- **Two validators.** *Scrutiny* distrusts the worker's claims and inspects the
-  diff and tests; *user-testing* exercises the app from the user's perspective.
-- **Automatic correction.** Failed validation becomes corrective features; the
-  loop repeats (bounded) until the milestone passes.
-- **Crash recovery.** Atomic JSON state + append-only event log — restart Goose
-  mid-mission and it reconciles and continues.
-- **Steering & replanning** mid-mission without losing completed work.
-- **Secrets redacted** in every persisted artifact.
+## 📖 Contents
 
-## Quickstart
+- [✨ Features](#-features)
+- [🚀 Quickstart](#-quickstart)
+- [🎯 The walkthrough](#-the-walkthrough)
+- [🏗️ How it works](#️-how-it-works)
+- [📦 Install](#-install)
+- [🛠️ The lifecycle (tools)](#️-the-lifecycle-tools)
+- [🗄️ Where state lives](#️-where-state-lives)
+- [🧪 Development](#-development)
+- [📚 Docs](#-docs)
+- [📜 License](#-license)
+
+---
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🚦 **Approval gate** | Nothing is implemented until *you* approve the plan |
+| 🏝️ **Isolated leaf workers** | Each feature runs in its own `goose` subprocess inside a Git worktree — no nested delegation, crash containment, real diffs |
+| 🕸️ **Dependency-aware scheduling** | A DAG of features with path-overlap conflict detection and a hard concurrency cap (your provider's limits, enforced in code) |
+| 🔍 **Two validators** | *Scrutiny* distrusts the worker's claims and inspects diff + tests; *user-testing* exercises the app from the user's perspective |
+| 🔁 **Automatic correction** | Failed validation becomes corrective features; the bounded loop repeats until the milestone passes |
+| 🧯 **Crash recovery** | Atomic JSON state + append-only event log — kill Goose mid-mission, reopen, it reconciles and continues |
+| 🧭 **Steering & replanning** | Change course mid-mission without losing completed work |
+| 🔐 **Secrets redacted** | Every persisted artifact scrubbed of keys, tokens, credentials |
+| 🪶 **Per-repo state** | Lives in `<repo>/.goose/hamgoose/` — nothing global, trivially git-ignored |
+
+## 🚀 Quickstart
 
 ```bash
-pip install git+https://github.com/cooked-ham/hamgoose.git   # requires Python 3.11+
+pip install git+https://github.com/cooked-ham/hamgoose.git   # Python 3.11+
 hamgoose register
 ```
+
+> [!TIP]
+> That's the whole install. Two commands, no repo wiring, no config surgery.
+> Uninstall is just as short: `hamgoose unregister && pip uninstall -y hamgoose`.
+
+## 🎯 The walkthrough
 
 Then, in **any** repository you're working in:
 
@@ -58,52 +91,94 @@ You:   My provider only allows 3 concurrent agents at a time.
 goose: Plan: 2 milestones, 6 features, workers capped at 3 concurrent. Approve?
 You:   Approve.
 goose: MS01 1/3 … passed scrutiny … MS02 2/3 …
-       Mission COMPLETED — changes on branch mission/base with per-feature commits.
+       ✅ Mission COMPLETED — changes on branch mission/base with per-feature commits.
 ```
 
 Rules are recorded **verbatim** on the mission (visible in every status and
 plan view), translated into execution config ("max 3 concurrent" →
 `max_concurrent_workers: 3`), and handed to **every worker** as context.
-Mid-mission you can just say "pause", "don't touch config files", or
-"replan around X" — steering and replanning never lose completed work.
+Mid-mission you can just say *"pause"*, *"don't touch config files"*, or
+*"replan around X"* — steering and replanning never lose completed work.
 
-## Install
+> [!NOTE]
+> No slash command? Just say **"start a hamgoose mission"** in plain English.
+> The `/start_mission` prompt and natural language drive the same guided flow.
+
+## 🏗️ How it works
+
+```mermaid
+flowchart LR
+    U["👤 You<br/>goal + rules"] --> G["Goose session"]
+    G <-->|MCP stdio| H["🦆 hamgoose<br/>orchestrator<br/>(deterministic code)"]
+    H -->|isolated goose run| W1["Worker F001<br/>🌳 worktree"]
+    H -->|isolated goose run| W2["Worker F002<br/>🌳 worktree"]
+    H --> V["🔍 Validators<br/>scrutiny + user-test"]
+    W1 -->|merge + commit| R[("repo<br/>mission/base")]
+    W2 -->|merge + commit| R
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> CREATED
+    CREATED --> ANALYZING
+    ANALYZING --> PLANNING
+    PLANNING --> AWAITING_APPROVAL
+    AWAITING_APPROVAL --> RUNNING : approve
+    RUNNING --> PAUSED
+    RUNNING --> BLOCKED
+    PAUSED --> RUNNING : resume
+    BLOCKED --> RUNNING : resolve + resume
+    RUNNING --> VALIDATING
+    VALIDATING --> RUNNING : corrective work
+    VALIDATING --> COMPLETED : all pass ✅
+    CREATED --> CANCELLED
+    AWAITING_APPROVAL --> CANCELLED
+    RUNNING --> FAILED
+    COMPLETED --> [*]
+    FAILED --> [*]
+    CANCELLED --> [*]
+```
+
+**Why it's different from "just let the agent do it":** the orchestrator is
+*deterministic code* — state machines, DAG scheduling, retries, Git
+bookkeeping, persistence are enforced, not hoped for. The LLM only does what
+LLMs are good at: understanding intent and writing code. A confused model
+can't corrupt the mission state, skip the approval gate, or double-dispatch
+a feature. See [ARCHITECTURE_REPORT.md](ARCHITECTURE_REPORT.md) for the full
+design analysis.
+
+## 📦 Install
 
 Requires `goose` (≥ 1.40) on your PATH and `git` (for Git missions).
 
-### 1. From GitHub (recommended)
+| Option | For | Command |
+|---|---|---|
+| **1. From GitHub** ⭐ | Everyone | `pip install git+https://github.com/cooked-ham/hamgoose.git` then `hamgoose register` |
+| **2. Goose's own menu** | No extra commands | `goose configure` → **Extensions → Add Extension** → STDIO / `hamgoose` / `hamgoose` |
+| **3. From a clone** | Contributors | `git clone … && cd hamgoose && uv venv .venv && uv pip install -p .venv -e .` then `hamgoose register` |
+| **4. Per-run** | One-off experiments | `goose run -t "..." --with-extension "hamgoose:python -m hamgoose"` |
 
-```bash
-pip install git+https://github.com/cooked-ham/hamgoose.git
-hamgoose register        # merges the stdio entry into Goose's config (auto .bak)
+> [!IMPORTANT]
+> Pin a release once tags exist:
+> `pip install "git+https://github.com/cooked-ham/hamgoose.git@v0.1.0"`.
+
+<details>
+<summary>🔧 What registration writes (manual option)</summary>
+
+```yaml
+# config.yaml — path printed by `goose info`
+extensions:
+  hamgoose:
+    enabled: true
+    type: stdio
+    name: hamgoose
+    description: Mission orchestration for Goose
+    command: hamgoose
 ```
 
-Pin a release once tags exist: `pip install "git+https://github.com/cooked-ham/hamgoose.git@v0.1.0"`.
+</details>
 
-### 2. Via Goose's own menu (no extra commands)
-
-`goose configure` → **Extensions → Add Extension** → Type `STDIO`, Name
-`hamgoose`, Command `hamgoose`. The same menu toggles or removes it later.
-
-### 3. From a clone (development)
-
-```bash
-git clone https://github.com/cooked-ham/hamgoose.git
-cd hamgoose
-uv venv .venv
-uv pip install -p .venv -e .
-.venv/bin/hamgoose register      # or: .venv\Scripts\hamgoose register (Windows)
-```
-
-### 4. Per-run, no config change
-
-```bash
-goose run -t "..." --with-extension "hamgoose:python -m hamgoose"
-```
-
-**Uninstall:** `hamgoose unregister` and `pip uninstall -y hamgoose`.
-
-## The lifecycle (tools)
+## 🛠️ The lifecycle (tools)
 
 | Operation | Tool |
 |---|---|
@@ -119,29 +194,27 @@ goose run -t "..." --with-extension "hamgoose:python -m hamgoose"
 | Read status / plan / events / list | `mission_status` / `mission_plan_view` / `mission_events` / `mission_list` |
 
 **Resources** (read): `mission://{id}/status|plan|events|features|milestones|validation`
-**Prompts**: `start_mission` (the `/start_mission` walkthrough), `plan_mission`, `resume_mission`, `validate_milestone`
+**Prompts**: `start_mission` (the `/start_mission` walkthrough) · `plan_mission` · `resume_mission` · `validate_milestone`
 
-No implementation happens until `mission_approve`.
-
-## Where state lives
+## 🗄️ Where state lives
 
 ```
 <repo>/.goose/hamgoose/<mission-id>/
-  mission.json     # canonical atomic state
-  mission.yaml     # human-readable mirror
-  plan.md          # plan mirror
-  events.jsonl     # append-only event log
-  workers/         # redacted worker transcripts
-  validation/      # validation reports
-  worktrees_base/  # mission/base worktree (merged result)
-  worktrees/<F>    # per-feature worktrees
+├── mission.json     # canonical atomic state
+├── mission.yaml     # human-readable mirror
+├── plan.md          # plan mirror
+├── events.jsonl     # append-only event log
+├── workers/         # redacted worker transcripts
+├── validation/      # validation reports
+├── worktrees_base/  # mission/base worktree (merged result)
+└── worktrees/<F>    # per-feature worktrees
 ```
 
-State is per-repo and git-ignorable; your current branch is never modified —
-`mission/base` accumulates the merged, validated result for you to merge.
-Add `/.goose/hamgoose/` to your repo's `.gitignore`.
+Your current branch is **never modified** — `mission/base` accumulates the
+merged, validated result for you to merge. Add `/.goose/hamgoose/` to your
+repo's `.gitignore`.
 
-## Development
+## 🧪 Development
 
 ```bash
 git clone https://github.com/cooked-ham/hamgoose.git && cd hamgoose
@@ -151,7 +224,7 @@ uv pip install -p .venv -e ".[dev]"
 .venv/bin/python -m pytest -m "realgoose"       # real Goose + LLM (slower)
 ```
 
-## Docs
+## 📚 Docs
 
 - [ARCHITECTURE_REPORT.md](ARCHITECTURE_REPORT.md) — design decisions & compliance analysis
 - [ARCHITECTURE.md](ARCHITECTURE.md) — component architecture
@@ -160,6 +233,14 @@ uv pip install -p .venv -e ".[dev]"
 - [TESTING.md](TESTING.md) — test strategy
 - [PUBLISHING.md](PUBLISHING.md) — PyPI release runbook
 
-## License
+## 📜 License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+**Built on [Goose](https://github.com/block/goose) · [MCP](https://modelcontextprotocol.io) · 🦆**
+
+</div>

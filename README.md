@@ -11,6 +11,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/hamgoose?color=neon)](https://pypi.org/project/hamgoose/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hamgoose?color=blue)](https://img.shields.io/pypi/pyversions/hamgoose)
 [![PyPI downloads](https://img.shields.io/pypi/dm/hamgoose?color=green)](https://img.shields.io/pypi/dm/hamgoose)
+[![npm version](https://img.shields.io/npm/v/@cooked-ham/hamgoose?color=cb3837)](https://www.npmjs.com/package/@cooked-ham/hamgoose)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Goose extension](https://img.shields.io/badge/Goose-extension-841697?logo=goose&logoColor=white)](https://goose-docs.ai)
 [![Code style: deterministic core](https://img.shields.io/badge/core-deterministic-orange)](#why-its-different)
@@ -66,14 +67,27 @@ reasoning.**
 
 ## 🚀 Quickstart
 
+**Node** — via npm:
+
+```bash
+npm i -g @cooked-ham/hamgoose
+hamgoose register
+```
+
+**Python** — via pip:
+
 ```bash
 pip install git+https://github.com/cooked-ham/hamgoose.git   # Python 3.11+
 hamgoose register
 ```
 
+**Either world, one shot (no install):** `npx @cooked-ham/hamgoose register`
+
 > [!TIP]
-> That's the whole install. Two commands, no repo wiring, no config surgery.
-> Uninstall is just as short: `hamgoose unregister && pip uninstall -y hamgoose`.
+> That's the whole install — two commands, no repo wiring, no config surgery.
+> Pick **one** channel (npm *or* pip); both provide the same `hamgoose` command.
+> Uninstall: `hamgoose unregister` + `npm uninstall -g @cooked-ham/hamgoose`
+> (or `pip uninstall -y hamgoose`).
 
 ## 🎯 The walkthrough
 
@@ -155,7 +169,7 @@ Requires `goose` (≥ 1.40) on your PATH and `git` (for Git missions).
 | **2. Goose's own menu** | No extra commands | `goose configure` → **Extensions → Add Extension** → STDIO / `hamgoose` / `hamgoose` |
 | **3. From a clone** | Contributors | `git clone … && cd hamgoose && uv venv .venv && uv pip install -p .venv -e .` then `hamgoose register` |
 | **4. Per-run** | One-off experiments | `goose run -t "..." --with-extension "hamgoose:python -m hamgoose"` |
-| **5. npm (Node world)** | Node-first machines | `npx @cooked-ham/hamgoose register` — installs + registers in one shot |
+| **5. npm (Node world)** | Node-first machines | `npm i -g @cooked-ham/hamgoose` then `hamgoose register` — or one-shot: `npx @cooked-ham/hamgoose register` |
 
 > [!IMPORTANT]
 > Pin a release once tags exist:

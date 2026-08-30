@@ -8,6 +8,19 @@ version = "0.1.0"
 description = "Factory-Droid-style Mission orchestration extension for Goose"
 readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "cookedham"}]
+keywords = ["goose", "mcp", "agent", "orchestration", "extensions", "missions"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "mcp[cli]>=1.25.0,<2",
     "pydantic>=2.7",
@@ -22,6 +35,11 @@ dev = [
 
 [project.scripts]
 hamgoose = "hamgoose:main"
+
+[project.urls]
+Homepage = "https://github.com/cooked-ham/hamgoose"
+Repository = "https://github.com/cooked-ham/hamgoose"
+Issues = "https://github.com/cooked-ham/hamgoose/issues"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,39 @@
+{
+  "name": "@cookedham/hamgoose",
+  "version": "0.1.0",
+  "description": "npm launcher for hamgoose — Factory-Droid-style Mission orchestration extension for Goose (goal → plan → approve → isolated workers → validated code)",
+  "keywords": [
+    "goose",
+    "goose-extension",
+    "mcp",
+    "agent",
+    "orchestration",
+    "missions",
+    "hamgoose"
+  ],
+  "license": "MIT",
+  "author": "cookedham",
+  "homepage": "https://github.com/cooked-ham/hamgoose",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cooked-ham/hamgoose.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cooked-ham/hamgoose/issues"
+  },
+  "bin": {
+    "hamgoose": "bin/hamgoose.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ]
+}

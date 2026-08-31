@@ -11,7 +11,7 @@ Run as an MCP server via:
     python -m hamgoose  # module entry point
 """
 __all__ = ["main", "get_extension", "__version__"]
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 
 
 def main():

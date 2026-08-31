@@ -312,8 +312,15 @@ def start_mission(goal: str = "", rules: str = "") -> str:
 
 
 @mcp.prompt()
-def plan_mission(goal: str) -> str:
+def plan_mission(goal: str = "") -> str:
     """Create a mission for the given goal and generate its structured plan for approval."""
+    if not goal:
+        return (
+            "The user wants a hamgoose mission plan but has not given a goal. "
+            "Ask for the goal in one short question. Once you have it, run mission_create "
+            "(if no mission exists for it) then mission_plan and show the structured plan "
+            "for approval."
+        )
     return (
         "Create and generate a plan for a hamgoose mission with goal: \"{}\". "
         "Run mission_create then mission_plan and show the structured plan for approval."
@@ -321,8 +328,15 @@ def plan_mission(goal: str) -> str:
 
 
 @mcp.prompt()
-def resume_mission(mission_id: str) -> str:
+def resume_mission(mission_id: str = "") -> str:
     """Reconcile the given mission after a pause or restart, resume it, and continue running."""
+    if not mission_id:
+        return (
+            "The user wants to resume a hamgoose mission but did not say which. Call "
+            "mission_list, offer the active/paused ones in one short question, then check "
+            "mission_status for the chosen one; if paused/blocked call mission_resume, "
+            "then mission_run."
+        )
     return (
         "Resume hamgoose mission {} (reconcile state after any restart). "
         "Check mission_status; if paused/blocked call mission_resume, then mission_run."
@@ -330,8 +344,14 @@ def resume_mission(mission_id: str) -> str:
 
 
 @mcp.prompt()
-def validate_milestone(mission_id: str) -> str:
+def validate_milestone(mission_id: str = "") -> str:
     """Run scrutiny + user-testing validation on the active milestone of the given mission."""
+    if not mission_id:
+        return (
+            "The user wants to validate a hamgoose milestone but did not say which mission. "
+            "Call mission_list, ask which mission in one short question, then run "
+            "mission_validate on it and report the structured verdict."
+        )
     return (
         "Validate the active milestone of hamgoose mission {} by running mission_validate "
         "(scrutiny and user_testing) and reporting the structured verdict."

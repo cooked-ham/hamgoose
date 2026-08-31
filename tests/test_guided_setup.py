@@ -47,6 +47,39 @@ def mcp_surface(monkeypatch):
     yield server.mcp
 
 
+class _FakeSemantic:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def complete(self, prompt, role=None):
+        self.calls += 1
+        return self.responses[min(self.calls - 1, len(self.responses) - 1)]
+
+
+def test_empty_plan_retries_then_fails_loudly(tmp_path):
+    """A 0-feature plan must never reach approval: the planner gets one grounded
+    retry, then plan() raises and the mission stays re-plannable."""
+    from hamgoose import store
+    from hamgoose.controller import MissionController
+
+    sem = _FakeSemantic(["no json here", "still no json"])
+    c = MissionController(str(tmp_path), server._parse_config(None), semantic=sem)
+    m = Mission(id="M-empty", goal="finish the earlier work", repo=str(tmp_path),
+                status=MissionStatus.PLANNING)
+    store.save_mission(m)
+    with pytest.raises(ValueError, match="empty plan"):
+        c.plan(m.id)
+    assert sem.calls == 2  # first attempt + grounded retry
+    m2 = c._get(m.id)
+    assert m2.status == MissionStatus.PLANNING  # still re-plannable
+    # defense in depth: approve refuses an empty plan even if forced into the state
+    m2.status = MissionStatus.AWAITING_APPROVAL
+    store.save_mission(m2)
+    with pytest.raises(ValueError, match="empty plan"):
+        c.approve(m.id)
+
+
 def _mission():
     return Mission(id="M-test", goal="g", repo=".", rules=RULES, status=MissionStatus.PLANNING)
 

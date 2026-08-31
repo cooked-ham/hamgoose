@@ -87,11 +87,18 @@ def mission_create(
 
 
 @mcp.tool()
-def mission_plan(mission_id: str, repo: Optional[str] = None) -> str:
+def mission_plan(mission_id: str, repo: Optional[str] = None, features: Optional[str] = None, milestones: Optional[str] = None) -> str:
     """Generate the structured dependency-aware plan and present it for approval.
-    No implementation happens until mission_approve is called."""
+    No implementation happens until mission_approve is called.
+
+    If the planner returns an empty plan (goal too vague), retry mission_plan - or
+    pass your OWN decomposition as JSON strings:
+    features='[{"id":"F001","title":"...","description":"...","milestone":"MS01",
+    "dependencies":[],"acceptance_criteria":["..."],"expected_paths":["..."]}]'
+    milestones='[{"id":"MS01","objective":"...","completion_criteria":["..."]}]'."""
     ctl = _controller(repo)
-    ctl.plan(mission_id)
+    ctl.plan(mission_id, features=json.loads(features) if features else None,
+             milestones=json.loads(milestones) if milestones else None)
     m = ctl._get(mission_id)
     return "PLAN (mission {}), status {}\n\n{}\n\nNext: call mission_approve to begin execution.".format(
         mission_id, m.status.value, ctl.plan_text(mission_id)

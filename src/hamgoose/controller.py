@@ -173,6 +173,18 @@ class MissionController:
             plan_dict = self._generate_plan(m)
         else:
             plan_dict = {"milestones": milestones or [], "features": features}
+        if not plan_dict.get("features"):
+            # Fail loudly instead of presenting an empty plan for approval:
+            # a 0-feature plan is a planner failure, not a plan.
+            m.repo_analysis["plan_error"] = "planner returned no features (goal may be too vague for the repo analysis)"
+            store.append_event(m, "PLAN_FAILED", entity=m.id, payload={"reason": "no features"})
+            store.save_mission(m)
+            raise ValueError(
+                "empty plan (0 features): the goal could not be decomposed from the "
+                "repository analysis. Ask the user for a more concrete goal (specific "
+                "files, behaviors, or docs to continue), then call mission_plan again "
+                "- or pass your own decomposition via the features/milestones params."
+            )
 
         self._apply_plan(m, plan_dict, note="initial plan", revision=1 if not m.plan_revisions else m.current_revision + 1)
         mission_transition(m.status, MissionStatus.AWAITING_APPROVAL)
@@ -188,6 +200,18 @@ class MissionController:
         prompt = prompting.decompose_prompt(m.goal, m.repo_analysis.get("summary", ""), self._project_context(m), max_features)
         text = self.semantic.complete(prompt, role="orchestrator")
         data = extract_json(text) or {}
+        if not data.get("features"):
+            # One grounded retry: a vague goal + a weak first response should not
+            # silently become an empty plan (plan() rejects those).
+            retry = prompt + (
+                "\n\nIMPORTANT: Your previous response contained no usable features. "
+                "Decompose the goal NOW. Ground it in the REPOSITORY ANALYSIS above and "
+                "in any existing plan/progress docs it mentions; if the goal references "
+                "prior work, derive concrete steps from the repository state. You MUST "
+                "return at least one milestone with at least one feature - an empty "
+                "plan is a failure."
+            )
+            data = extract_json(self.semantic.complete(retry, role="orchestrator")) or data
         return data
 
     def _apply_plan(self, m: Mission, plan_dict: Dict[str, Any], note: str, revision: int) -> None:
@@ -240,6 +264,8 @@ class MissionController:
         m = self._get(mission_id_)
         if m.status != MissionStatus.AWAITING_APPROVAL:
             raise ValueError("mission is not awaiting approval (state={})".format(m.status.value))
+        if not m.features:
+            raise ValueError("cannot approve an empty plan (0 features); generate one with mission_plan first")
         mission_transition(m.status, MissionStatus.RUNNING)
         m.status = MissionStatus.RUNNING
         store.append_event(m, "PLAN_APPROVED", entity=m.id)

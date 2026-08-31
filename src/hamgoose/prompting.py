@@ -35,7 +35,9 @@ HARD RULES
 - Do NOT modify files outside the feature's allowed scope.
 - You MUST NOT delegate, spawn sub-agents, or start nested goose sessions.
   You are a leaf worker; finish this single feature yourself.
-- Run the verification commands when available and inspect your own diff.
+- Be decisive: inspect the relevant files, implement the feature, then run the
+  targeted verification commands and inspect your own diff. Do not explore
+  unrelated parts of the repository or run the entire suite unless it is needed.
 - Commit your changes with git (message: 'feat(<id>): <title>') when git is enabled.
 - If you cannot complete the work, set status to "failed" or "blocked" and say why.
 Do NOT claim success unless the acceptance criteria are actually met.
@@ -93,7 +95,8 @@ GIT
 {json.dumps(git_info)}
 
 {_RULES}{prior}
-Implement the feature now.{_WORKER_CONTRACT}"""
+Implement the feature now. Keep the work and final summary focused on this
+feature; do not spend turns narrating or researching unrelated code.{_WORKER_CONTRACT}"""
 
 
 def scrutiny_prompt(mission: Mission, milestone_id: str, base: str, head: str, project_context: str) -> str:
@@ -119,7 +122,9 @@ MILESTONE {milestone_id} OBJECTIVE
 BASE REVISION: {base or "n/a"}
 RESULT REVISION: {head or "n/a"}
 
-INSPECT THE ACTUAL REPOSITORY (git diff, file contents, run build/tests/lint).
+Inspect the actual repository, prioritizing the changed files, their direct
+dependencies, and the tests relevant to this milestone. Run targeted build or
+test commands first; broaden the check only when the evidence requires it.
 Do NOT trust the worker summaries below. For each feature verify:
 - the change actually exists and matches the acceptance criteria
 - correctness, error handling, edge cases
@@ -164,8 +169,9 @@ MILESTONE OBJECTIVE
 {ms.objective if ms else ""}
 
 Start/exercise the application (CLI, API, browser, TUI, scripts - whatever fits)
-and drive the following user flows. Passing unit tests does NOT prove a user-facing
-feature works. Actually run it and observe the outcome.
+and drive the primary user flow below once. Passing unit tests does NOT prove a
+user-facing feature works. Keep the test focused on this milestone; do not do
+unrelated exploratory testing.
 
 USER FLOWS
 {flows_block}
@@ -200,11 +206,15 @@ REPOSITORY ANALYSIS
 PROJECT INSTRUCTIONS / CONVENTIONS
 {instructions or "(none)"}
 
-Produce milestones (meaningful integration/validation boundaries) and features.
+Produce the smallest complete plan: milestones should be meaningful
+integration/validation boundaries, and each feature should be one focused worker
+task. Use the repository analysis above; do not spend time reconstructing
+unrelated history.
 Each feature must be small enough for ONE isolated worker to complete reliably,
 have concrete acceptance criteria, and define likely affected paths. Define
 dependencies so the graph is acyclic. Do NOT create trivial micro-features
 (create a file / add an import) nor giant vague ones (rewrite backend).
+Keep titles, descriptions, and criteria concise (one or two sentences each).
 
 Return ONLY a single fenced JSON block:
 ```json
@@ -292,9 +302,10 @@ MISSION GOAL
 BASE REVISION: {base or "n/a"}
 FINAL REVISION: {head or "n/a"}
 
-Inspect the whole repository and verify the user goal is actually met end to end:
-run build/tests/lint, exercise the primary user-facing behavior, check for
-regressions and placeholder code.
+Verify the mission goal end to end using the changed files, acceptance criteria,
+and the primary user-facing behavior. Run targeted build/tests/lint checks first;
+inspect unrelated areas only if they are implicated by the changes. Check for
+regressions and placeholder code without doing an exhaustive repository tour.
 
 PROJECT CONTEXT
 {project_context or "(none)"}

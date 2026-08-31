@@ -17,15 +17,18 @@ from pydantic import BaseModel, Field
 class RoleConfig(BaseModel):
     provider: str = "inherit"
     model: str = "inherit"
-    max_turns: int = Field(default=100, ge=1)
+    # Leaf Goose calls are bounded, but leave enough room for real inspection,
+    # implementation, and a targeted verification pass.
+    max_turns: int = Field(default=32, ge=1)
 
 
 class ExecutionConfig(BaseModel):
     max_concurrent_workers: int = Field(default=2, ge=1)
     max_feature_attempts: int = Field(default=3, ge=1)
-    worker_timeout: Optional[int] = Field(default=1800, ge=1)
-    semantic_timeout: int = Field(default=900, ge=1)
-    max_steps_per_run: int = Field(default=50, ge=1)
+    worker_timeout: Optional[int] = Field(default=420, ge=1)
+    semantic_timeout: int = Field(default=180, ge=1)
+    # Keep each MCP call short enough for the host UI to remain responsive.
+    max_steps_per_run: int = Field(default=6, ge=1)
 
 
 class ValidationConfig(BaseModel):

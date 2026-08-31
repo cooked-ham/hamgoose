@@ -90,11 +90,12 @@ mcp = FastMCP("hamgoose")
 # TOOLS (state-changing operations)
 # ========================================================================== #
 @mcp.tool()
-def mission_create(
+async def mission_create(
     goal: str,
     repo: Optional[str] = None,
     rules: str = "",
     config: Optional[Dict[str, Any]] = None,
+    ctx: Optional[Context] = None,
 ) -> str:
     """Create a hamgoose mission. Use this to START a mission for the user.
 
@@ -119,7 +120,14 @@ def mission_create(
     Returns the mission id, a readiness report and next steps.
     Next: mission_plan, present the plan, get approval, mission_approve, mission_run."""
     ctl = _controller(repo, _parse_config(config))
-    m = ctl.create_mission(goal, _parse_config(config), rules=rules or None)
+    m = await _call_with_progress(
+        ctl,
+        "create_mission",
+        ctx,
+        goal,
+        _parse_config(config),
+        rules=rules or None,
+    )
     out = "Mission created: {}\n\n".format(m.id)
     out += ctl.readiness(m.id) + "\n\n"
     out += "Next: call mission_plan to generate the structured plan.\n"

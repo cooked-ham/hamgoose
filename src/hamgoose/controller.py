@@ -230,7 +230,7 @@ class MissionController:
     def _generate_plan(self, m: Mission) -> Dict[str, Any]:
         if self.planner is not None:
             return self.planner(m, m.goal)
-        max_features = 18
+        max_features = 12
         prompt = prompting.decompose_prompt(m.goal, m.repo_analysis.get("summary", ""), self._project_context(m), max_features)
         text = self.semantic.complete(prompt, role="orchestrator")
         data = extract_json(text) or {}
@@ -249,6 +249,7 @@ class MissionController:
         return data
 
     def _apply_plan(self, m: Mission, plan_dict: Dict[str, Any], note: str, revision: int) -> None:
+        cfg = self._cfg(m)
         # milestones
         for msd in plan_dict.get("milestones", []) or []:
             mid = msd.get("id") or m.next_milestone_id()
@@ -274,6 +275,7 @@ class MissionController:
                 expected_paths=list(f.get("expected_paths", []) or []),
                 prohibited_paths=list(f.get("prohibited_paths", []) or []),
                 validation_required=bool(f.get("validation_required", True)),
+                max_attempts=int(f.get("max_attempts", cfg.execution.max_feature_attempts)),
             )
             m.features[fid] = ft
         # link features to milestones
@@ -398,15 +400,28 @@ class MissionController:
         base, head = self._base_head(m)
         ctx = self._project_context(m)
         passed = True
-        results = []
+        checks = []
         if cfg.validation.scrutiny:
-            r = self.validation_backend.run("scrutiny", m, ms.id, base, head, self._validation_workdir(m), ctx)
-            results.append(r)
-            ms.scrutiny_status = "passed" if r.passed else "failed"
+            checks.append("scrutiny")
         if cfg.validation.user_testing:
-            r = self.validation_backend.run("user_testing", m, ms.id, base, head, self._validation_workdir(m), ctx)
-            results.append(r)
-            ms.user_testing_status = "passed" if r.passed else "failed"
+            checks.append("user_testing")
+
+        # These validators inspect the same immutable revision independently;
+        # running them together cuts validation wall time roughly in half while
+        # preserving both required verdicts and their stable output order.
+        results = []
+        if checks:
+            with ThreadPoolExecutor(max_workers=len(checks)) as executor:
+                futures = [executor.submit(
+                    self.validation_backend.run,
+                    kind, m, ms.id, base, head, self._validation_workdir(m), ctx,
+                ) for kind in checks]
+                results = [future.result() for future in futures]
+        for r in results:
+            if r.kind == "scrutiny":
+                ms.scrutiny_status = "passed" if r.passed else "failed"
+            elif r.kind == "user_testing":
+                ms.user_testing_status = "passed" if r.passed else "failed"
         for r in results:
             ms.validation.append(r)
             if not r.passed:
@@ -444,6 +459,7 @@ class MissionController:
             return False
 
     def _create_fix_features(self, m: Mission, ms: Milestone, results: List[ValidationResult]) -> None:
+        cfg = self._cfg(m)
         seen = set()
         for r in results:
             for f in r.findings:
@@ -474,6 +490,7 @@ class MissionController:
                     expected_paths=src.expected_paths,
                     prohibited_paths=src.prohibited_paths,
                     validation_required=True,
+                    max_attempts=cfg.execution.max_feature_attempts,
                     fix_of=src.id,
                     is_fix=True,
                 )
@@ -524,6 +541,7 @@ class MissionController:
         return False
 
     def _create_final_fixes(self, m: Mission, corr: Milestone, r: ValidationResult) -> None:
+        cfg = self._cfg(m)
         seen = set()
         for f in r.findings:
             target = f.feature if f.feature in m.features and f.feature not in ("-", "milestone") else None
@@ -538,7 +556,8 @@ class MissionController:
                     milestone=corr.id, dependencies=[d for d in src.dependencies if d in m.features],
                     priority=10, acceptance_criteria=["Defect fixed: {}".format(f.problem)],
                     expected_paths=src.expected_paths, prohibited_paths=src.prohibited_paths,
-                    validation_required=True, fix_of=target, is_fix=True,
+                    validation_required=True, max_attempts=cfg.execution.max_feature_attempts,
+                    fix_of=target, is_fix=True,
                 )
             else:
                 nid = m.next_feature_id()
@@ -546,7 +565,8 @@ class MissionController:
                     id=nid, title="FIX: " + (f.problem or f.criterion)[:120],
                     description="Final corrective work.\nProblem: {}\nFix: {}".format(f.problem, f.recommended_fix),
                     milestone=corr.id, priority=10,
-                    acceptance_criteria=["Defect fixed: {}".format(f.problem)], validation_required=True, is_fix=True,
+                    acceptance_criteria=["Defect fixed: {}".format(f.problem)], validation_required=True,
+                    max_attempts=cfg.execution.max_feature_attempts, is_fix=True,
                 )
             m.features[nid] = ft
             if nid not in corr.features:

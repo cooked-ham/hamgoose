@@ -36,8 +36,9 @@ def plan_md(mission: Mission) -> str:
     lines.append("")
     n_features = len(mission.features)
     est_workers = sum(f.max_attempts for f in mission.features.values())
+    max_corrections = v.get("max_correction_attempts", 3)
     lines.append(f"Estimated worker runs: <= {est_workers}")
-    lines.append(f"Estimated validation runs: <= {len(mission.ordered_milestones()) * 2 * 3}")
+    lines.append(f"Estimated validation runs: <= {len(mission.ordered_milestones()) * 2 * max_corrections}")
     lines.append(f"Features: {n_features}")
     return "\n".join(lines)
 

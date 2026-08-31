@@ -64,7 +64,7 @@ def run_captured(
     try:
         with open(out_path, "w", encoding="utf-8", errors="replace") as of, \
                 open(err_path, "w", encoding="utf-8", errors="replace") as ef:
-            proc = subprocess.Popen(cmd, stdout=of, stderr=ef, **kwargs)
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=of, stderr=ef, **kwargs)
             try:
                 proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:

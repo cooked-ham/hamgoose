@@ -22,6 +22,7 @@ class GitManager:
             proc = subprocess.run(
                 ["git", *args],
                 cwd=cwd or self.repo,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -108,6 +109,7 @@ class GitManager:
             proc = subprocess.run(
                 ["git", "commit", "-m", message, "--allow-empty"],
                 cwd=cwd or self.repo,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=120,

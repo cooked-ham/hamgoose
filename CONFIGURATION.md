@@ -7,11 +7,12 @@ Pass `config` to `mission_create` (JSON object) or set `HAMGOOSE_CONFIG`
 
 ```json
 {
-  "orchestrator": { "provider": "inherit", "model": "inherit", "max_turns": 100 },
-  "worker":       { "provider": "inherit", "model": "inherit", "max_turns": 100 },
-  "validator":    { "provider": "inherit", "model": "inherit", "max_turns": 100 },
+  "orchestrator": { "provider": "inherit", "model": "inherit", "max_turns": 32 },
+  "worker":       { "provider": "inherit", "model": "inherit", "max_turns": 32 },
+  "validator":    { "provider": "inherit", "model": "inherit", "max_turns": 32 },
   "execution":    { "max_concurrent_workers": 2, "max_feature_attempts": 3,
-                    "worker_timeout": null, "max_steps_per_run": 50 },
+                    "worker_timeout": 420, "semantic_timeout": 180,
+                    "max_steps_per_run": 6 },
   "validation":   { "scrutiny": true, "user_testing": true, "max_correction_attempts": 3 },
   "git":          { "enabled": true, "use_worktrees": true,
                     "auto_commit_features": true, "base_branch": "mission/base",
@@ -26,10 +27,15 @@ Pass `config` to `mission_create` (JSON object) or set `HAMGOOSE_CONFIG`
 - **`max_concurrent_workers`** (default **2**): the concurrency ceiling. Two is the
   default so the system behaves well with providers that limit concurrent
   requests. Never exceeded; conflicting features are additionally serialized.
-- **`max_feature_attempts`** (default 3): bounded retries. Never retries forever.
-- **`worker_timeout`** (seconds, `null` = none): kills a stuck worker
-  (`WORKER_TIMEOUT`).
-- **`max_steps_per_run`**: control-loop checkpoint budget per `mission_run` call.
+- **`max_feature_attempts`** (default **3**): bounded retries. Never retries forever.
+- **`worker_timeout`** (default **420 seconds**): kills a stuck worker
+  (`WORKER_TIMEOUT`) instead of holding the host open indefinitely.
+- **`semantic_timeout`** (default **180 seconds**): bounds planning and validation
+  Goose calls.
+- **`max_steps_per_run`** (default **6**): keeps each `mission_run` call short;
+  call it again to continue.
+- **`max_turns`** (default **32** per role): bounds each isolated Goose task. Raise
+  it for unusually complex features, or lower it for an even faster profile.
 - **`validation.scrutiny` / `user_testing`**: enable/disable each validator.
 - **`git.*`**: `enabled=false` runs features directly in the repo (no worktrees);
   `use_worktrees` toggles isolated worktrees; `auto_commit_features` toggles the
@@ -98,5 +104,9 @@ Add to the target repo's `.gitignore` so runtime logs never enter the user's rep
 - **Conflict heuristic** uses declared `expected_paths` (exact or path-prefix
   overlap). A feature with no `expected_paths` is treated as non-conflicting.
 - **Real-LLM tests** are slower and can be flaky; tag/skip with `-m "not realgoose"`.
+- **Speed vs. depth**: the defaults favor focused, observable runs without
+  removing retries or validation. The two milestone validators still run, but
+  they run concurrently; increase the time and turn limits per mission when a
+  feature needs deeper investigation.
 - **mcp pin**: `mcp[cli]>=1.25.0,<2` matches the documented `FastMCP` model. A
   future Goose requiring mcp 2.x needs the mechanical `FastMCP`→`MCPServer` rename.

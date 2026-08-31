@@ -13,8 +13,12 @@ def test_defaults_are_bounded_for_interactive_runs():
     assert cfg.orchestrator.max_turns == 32
     assert cfg.worker.max_turns == 32
     assert cfg.validator.max_turns == 32
-    assert cfg.execution.semantic_timeout == 180
-    assert cfg.execution.worker_timeout == 420
+    # H3/H4: 420/180 s killed Qwen3.8-class workers/validators mid-flight;
+    # defaults now cover small-output-budget models (caps are inert for fast
+    # models since a run ends when the model finishes).
+    assert cfg.execution.semantic_timeout == 600
+    assert cfg.execution.worker_timeout == 900
+    assert cfg.execution.planner_timeout == 600
     assert cfg.execution.max_steps_per_run == 6
     assert cfg.execution.max_feature_attempts == 3
     assert cfg.validation.max_correction_attempts == 3

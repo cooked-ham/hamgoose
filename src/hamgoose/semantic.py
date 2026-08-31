@@ -207,4 +207,9 @@ class SemanticClient:
             return self.config.resolved_validator()
         if role == "worker":
             return self.config.resolved_worker()
+        if role == "planner":
+            # H2: planner pins resolve through config.planner (falling back to
+            # orchestrator, then the environment) instead of always riding the
+            # orchestrator role.
+            return self.config.resolved_planner()
         return self.config.resolved_orchestrator()

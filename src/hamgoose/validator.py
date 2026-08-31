@@ -35,25 +35,63 @@ class GooseRunValidationBackend(ValidationBackend):
     name = "goose_run"
 
     def __init__(self, semantic):
-        self.semantic = semantic  # a SemanticClient-like with .complete(prompt, role)
+        # `semantic` is either a SemanticClient-like instance or a callable
+        # (mission) -> client. The controller passes the callable form so the
+        # validator's provider/model/timeouts resolve from the MISSION's
+        # effective config (H5), not from controller-level defaults that never
+        # saw mission overrides.
+        self._semantic = semantic
 
-    def run(self, kind, mission, milestone_id, base, head, workdir, project_context):
+    def _client(self, mission: Mission):
+        return self._semantic(mission) if callable(self._semantic) else self._semantic
+
+    def _timeout_for(self, mission: Mission, milestone_id: str, timeout: Optional[int]) -> int:
+        """Effective validator budget: mission config base (H5), doubled per
+        infrastructure retry (H4) so the retry is a genuine second chance."""
+        if timeout is not None:
+            return int(timeout)
+        base = 600
+        try:
+            from .config import Config
+
+            base = Config.load(mission.config or None, repo=mission.repo).execution.semantic_timeout
+        except Exception:
+            pass
+        ms = (mission.milestones or {}).get(milestone_id)
+        retries = getattr(ms, "validation_infra_retries", 0) or 0
+        return base * (retries + 1)
+
+    def run(self, kind, mission, milestone_id, base, head, workdir, project_context, timeout: Optional[int] = None):
         if kind == "scrutiny":
             prompt = prompting.scrutiny_prompt(mission, milestone_id, base, head, project_context)
         elif kind == "user_testing":
             prompt = prompting.user_test_prompt(mission, milestone_id, base, head, project_context)
         else:
             prompt = prompting.final_validation_prompt(mission, base, head, project_context)
-        text = self.semantic.complete(prompt, role="validator")
+        client = self._client(mission)
+        if hasattr(client, "complete_detailed"):
+            res = client.complete_detailed(prompt, role="validator",
+                                           timeout=self._timeout_for(mission, milestone_id, timeout))
+            return _parse_validation(kind, res.text, timed_out=res.timed_out)
+        text = client.complete(prompt, role="validator")  # legacy/test client
         return _parse_validation(kind, text)
 
 
-def _parse_validation(kind: str, text: str) -> ValidationResult:
+def _parse_validation(kind: str, text: str, timed_out: bool = False) -> ValidationResult:
     from .semantic import extract_json
 
     data = extract_json(text or "")
     raw = redact.redact(text or "")
     if not data:
+        if timed_out:
+            # H4: a kill at the time budget is an infrastructure outcome. It is
+            # recorded, but it is NOT a major quality verdict - the controller
+            # branches on timed_out before the corrective loop.
+            return ValidationResult(
+                kind=kind, passed=False, severity="none",
+                summary="validator timeout - no structured verdict (infrastructure, not a quality failure)",
+                raw=raw, timed_out=True,
+            )
         return ValidationResult(kind=kind, passed=False, severity="major", summary="validator produced no structured verdict", raw=raw)
     findings = [
         Finding(
@@ -116,7 +154,7 @@ class MockValidationBackend(ValidationBackend):
     def __init__(self, checker: Optional[Callable[..., Dict[str, Any]]] = None):
         self.checker = checker or _default_checker
 
-    def run(self, kind, mission, milestone_id, base, head, workdir, project_context):
+    def run(self, kind, mission, milestone_id, base, head, workdir, project_context, timeout: Optional[int] = None):
         data = self.checker(kind, mission, milestone_id, workdir) or {}
         passed = data.get("passed", False)
         if isinstance(passed, str):

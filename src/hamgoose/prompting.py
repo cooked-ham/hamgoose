@@ -38,6 +38,10 @@ HARD RULES
 - Be decisive: inspect the relevant files, implement the feature, then run the
   targeted verification commands and inspect your own diff. Do not explore
   unrelated parts of the repository or run the entire suite unless it is needed.
+- NEVER create scratch/debug files inside the repository (no _*.py probes,
+  *.diff/.txt dumps, temp scripts). Use the system temp directory OUTSIDE the
+  repo, and clean up anything you create there. (H9: scratch files were
+  committed to mission history.)
 - Commit your changes with git (message: 'feat(<id>): <title>') when git is enabled.
 - If you cannot complete the work, set status to "failed" or "blocked" and say why.
 Do NOT claim success unless the acceptance criteria are actually met.
@@ -79,6 +83,21 @@ def worker_prompt(mission: Mission, feature: Feature, git_info: dict, project_co
             "then report.\n"
             "Truncated final message from the previous run:\n"
             + feature.failure_detail + "\n"
+        )
+    elif str(feature.failure) == "ENVELOPE_FAILURE":
+        # H7: the previous run already wrote and committed the work but died
+        # before (or with a malformed) final JSON envelope. The cheapest
+        # recovery is: verify the tree, then emit the envelope only.
+        prior = (
+            "\nRESUMING AFTER AN ENVELOPE FAILURE\n"
+            "Your previous run already WROTE AND COMMITTED the implementation, "
+            "but it never emitted the required final JSON envelope (or it was "
+            "malformed). Do NOT redo or rewrite the work. Quickly confirm the "
+            "worktree state, then make your FINAL message exactly the fenced "
+            "JSON envelope describing the completed work. Use status "
+            "\"completed\" only if the acceptance criteria are met.\n"
+            + ("Previous run detail:\n" + feature.failure_detail + "\n"
+               if feature.failure_detail else "")
         )
     elif feature.attempts > 0 and feature.failure_detail:
         prior = (

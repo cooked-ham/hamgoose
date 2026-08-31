@@ -59,6 +59,7 @@ class FailureClass(str, Enum):
     WORKER_TIMEOUT = "WORKER_TIMEOUT"
     WORKER_CRASH = "WORKER_CRASH"
     IMPLEMENTATION_FAILURE = "IMPLEMENTATION_FAILURE"
+    ENVELOPE_FAILURE = "ENVELOPE_FAILURE"
     TEST_FAILURE = "TEST_FAILURE"
     VALIDATION_FAILURE = "VALIDATION_FAILURE"
     MERGE_CONFLICT = "MERGE_CONFLICT"
@@ -75,6 +76,7 @@ RETRYABLE_FAILURES = {
     FailureClass.WORKER_TIMEOUT,
     FailureClass.WORKER_CRASH,
     FailureClass.IMPLEMENTATION_FAILURE,
+    FailureClass.ENVELOPE_FAILURE,
     FailureClass.TEST_FAILURE,
 }
 
@@ -123,7 +125,10 @@ class ValidationResult:
     findings: List[Finding] = field(default_factory=list)
     summary: str = ""
     raw: Optional[str] = None
-
+    #: H4: the validator leaf was killed at its time budget before it could
+    #: emit a verdict. This is an infrastructure outcome, NOT a quality
+    #: failure: it must never count toward max_correction_attempts.
+    timed_out: bool = False
 
 # --------------------------------------------------------------------------- #
 # Feature
@@ -204,6 +209,10 @@ class Milestone:
     user_testing_status: str = "pending"
     validation: List[ValidationResult] = field(default_factory=list)
     correction_attempts: int = 0
+    #: H4: validation rounds that died on infrastructure (validator timeout /
+    #: no actionable findings) and are being retried outside the correction
+    #: budget. Two strikes => BLOCKED with the validator reason.
+    validation_infra_retries: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -273,7 +282,8 @@ class Mission:
     readiness: Dict[str, Any] = field(default_factory=dict)
     final_validation: List[ValidationResult] = field(default_factory=list)
     correction_attempts: int = 0
-
+    #: H4: infrastructure retry counter for the final validation phase.
+    validation_retries: int = 0
     # -- convenience -------------------------------------------------------- #
     def feature(self, fid: str) -> Optional[Feature]:
         return self.features.get(fid)

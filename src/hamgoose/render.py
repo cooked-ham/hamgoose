@@ -50,11 +50,17 @@ def mission_control(mission: Mission) -> str:
     if mission.rules:
         lines.append(f"Rules: {mission.rules}")
     lines.append(f"Status: {mission.status.value}")
-    # HG-07/HG-16: model check + extension version always visible in status
     mc = (mission.repo_analysis or {}).get("model_check") or {}
     if mc:
         lines.append("Worker model: {} - {}".format(mc.get("model"), mc.get("verdict")))
     ra = mission.repo_analysis or {}
+    if ra.get("suggested_config"):
+        # H10: the suggestion must survive into status, not just the create
+        # dump - it is actionable via mission_apply_suggestions.
+        import json as _json
+
+        lines.append("Suggested config: {} (apply with mission_apply_suggestions)".format(
+            _json.dumps(ra["suggested_config"])))
     if ra.get("plan_error"):
         lines.append("Plan error: {}".format(ra.get("plan_error")))
     if mission.pause_reason:
@@ -110,8 +116,20 @@ def mission_control(mission: Mission) -> str:
             last = m.validation[-1]
             lines.append(f"  Milestone {mid}: {last.kind} {'PASSED' if last.passed else 'FAILED'}")
         lines.append("")
-
     if mission.events:
+        last = mission.events[-1]
+        age = ""
+        try:
+            from datetime import datetime, timezone
+
+            ts = datetime.fromisoformat(last.get("ts") or "")
+            age = " ({}s ago)".format(int((datetime.now(timezone.utc) - ts).total_seconds()))
+        except Exception:
+            pass
+        # H8: last-event age separates "poll lag" from "loop is dead".
+        lines.append("Last event: {} {}{}".format(
+            last.get("type", ""), last.get("entity") or "", age))
+        lines.append("")
         lines.append("Recent events")
         for ev in mission.events[-6:]:
             lines.append(f"  {ev.get('ts','')[:19]}  {ev.get('type','')}  {ev.get('entity') or ''}".rstrip())

@@ -215,6 +215,14 @@ def append_event(mission: Mission, etype: str, entity: Optional[str] = None, pay
         ensure_dirs(mission.repo, mission.id)
         with open(events_path(mission.repo, mission.id), "a", encoding="utf-8") as f:
             f.write(json.dumps(ev) + "\n")
+            # H8: events.jsonl is the cross-process source of truth; a caller
+            # polling mission_events must see an append immediately, so flush
+            # to the OS (and fsync when the platform allows) on every event.
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
     except OSError:
         pass
     return ev
@@ -235,10 +243,20 @@ def list_missions(repo: str) -> List[Dict[str, Any]]:
     out = []
     if not os.path.isdir(root):
         return out
+    from datetime import datetime, timezone as _tz
+
+    now = datetime.now(_tz.utc)
     for name in sorted(os.listdir(root)):
         m = load_mission(repo, name)
         if m:
             done = sum(1 for f in m.features.values() if f.status.value == "COMPLETED")
+            terminal = m.status.value in ("COMPLETED", "FAILED", "CANCELLED")
+            age_days = None
+            try:
+                updated = datetime.fromisoformat(m.updated_at or "")
+                age_days = max(0.0, (now - updated).total_seconds() / 86400.0)
+            except Exception:
+                pass
             out.append(
                 {
                     "id": m.id,
@@ -247,6 +265,11 @@ def list_missions(repo: str) -> List[Dict[str, Any]]:
                     "features": len(m.features),
                     "completed": done,
                     "updated_at": m.updated_at,
+                    # H11: surface stale clutter so automation can filter or
+                    # archive it instead of crossing missions.
+                    "terminal": terminal,
+                    "age_days": round(age_days, 2) if age_days is not None else None,
+                    "stale": terminal or (age_days is not None and age_days >= 7.0),
                 }
             )
     return out

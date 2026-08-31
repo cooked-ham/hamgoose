@@ -48,7 +48,7 @@ def test_malformed_repo_file_is_ignored(tmp_path):
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "config.json"), "w") as f:
         f.write("{not json")
-    assert Config.load(repo=repo).execution.worker_timeout == 420  # factory default
+    assert Config.load(repo=repo).execution.worker_timeout == 900  # factory default (H3)
 
 
 def test_config_drift_event_fires_on_hand_edit(tmp_path):
@@ -78,7 +78,7 @@ def test_yaml_hand_edit_surfaces_drift(tmp_path):
     ctl = make_controller(repo)
     m = ctl.create_mission("g")
     yp = os.path.join(store.mission_dir(repo, m.id), "mission.yaml")
-    text = open(yp).read().replace("worker_timeout: 420", "worker_timeout: 1800")
+    text = open(yp).read().replace("worker_timeout: 900", "worker_timeout: 1800")
     with open(yp, "w") as f:
         f.write(text)
     m2 = ctl._get(m.id)

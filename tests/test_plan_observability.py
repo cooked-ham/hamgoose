@@ -59,7 +59,12 @@ def _mission(tmp_path):
 
 def test_planner_timeout_is_separate_and_default_600():
     assert Config().execution.planner_timeout == 600
-    assert Config().execution.semantic_timeout == 180
+    # H4: 180 s killed validators mid-verdict; the validator/planner budget is
+    # now 600 s by default and the two remain independent knobs.
+    assert Config().execution.semantic_timeout == 600
+    cfg = Config.load({"execution": {"planner_timeout": 1200}})
+    assert cfg.execution.planner_timeout == 1200
+    assert cfg.execution.semantic_timeout == 600
 
 
 def test_complete_detailed_honors_explicit_timeout(monkeypatch, tmp_path):
@@ -78,7 +83,7 @@ def test_complete_detailed_honors_explicit_timeout(monkeypatch, tmp_path):
     assert captured["timeout"] == 600
     # default falls back to semantic_timeout
     sem.complete_detailed("p", role="orchestrator")
-    assert captured["timeout"] == 180
+    assert captured["timeout"] == 600
     # smoke uses its own bounds
     sem.smoke("p", timeout=60, max_turns=2)
     assert captured["timeout"] == 60

@@ -12,10 +12,12 @@ uv pip install -p .venv "pytest>=8" "pytest-asyncio>=0.23"
 .venv\Scripts\python -m pytest -m "realgoose" -q
 ```
 
-> Windows note: if pytest cannot create its default per-user temp dir under
-> `%TEMP%` (e.g. `PermissionError: [WinError 5] … pytest-of-<user>`), point
-> basetemp at a repo-local (git-ignored) directory:
-> `-p no:cacheprovider --basetemp=.pytest_tmp`
+> Windows: `--basetemp=.pytest_tmp` is **baked into `pyproject.toml`**, so plain
+> `pytest` works with no manual flags (the per-user `%TEMP%` root is
+> permission-fragile — see `WINDOWS.md` §6). The `realgoose` tests skip
+> automatically when `goose` is absent **and when the provider's credits are
+> exhausted** (detected from the raw worker transcripts — a quota outage is an
+> environment condition, not a pipeline failure).
 
 ## What is tested
 
@@ -30,6 +32,24 @@ uv pip install -p .venv "pytest>=8" "pytest-asyncio>=0.23"
   append-only events.
 - **Redaction** (`test_redact.py`): bearer/api-key/sk-/AWS secrets scrubbed.
 - **Models** (`test_models.py`): (de)serialization round-trips.
+
+### Hardening suite (v0.1.8 — see `FIX_PLAN.md` for the failure evidence)
+
+| File | Covers |
+|---|---|
+| `test_failure_classification.py` | model-limit death → `MODEL_LIMIT_FAILURE` (retryable); 420.8 s boundary → `WORKER_TIMEOUT`; exit-0 provider quota; clean-done accepted; resume prompt carries the truncated tail |
+| `test_prompting.py` | code-first budget lines; output contract byte-identical; no resume block on first attempt |
+| `test_plan_observability.py` | separate 600 s planner timeout; `PLAN_FAILED {timed_out, raw_tail, attempts}`; small-slice retry; no silent planner death |
+| `test_preflight.py` | model smoke OK / SMALL-OUTPUT-BUDGET / WARN; never fails creation; version stamped on events + readiness |
+| `test_config_channel.py` | env < repo file < overrides precedence; `CONFIG_DRIFT` on json **and** yaml hand edits; effective-config echo |
+| `test_retry_budget.py` | manual retries count toward the budget; `beyond_budget` events; automated retries cap |
+| `test_plan_revisions.py` | 0-feature revision impossible; external structural change → recorded revision; controller fix features self-record |
+| `test_store.py` (ext.) | `events.jsonl` canonical — mutate after save, reload reflects it; no dual-write |
+| `test_commit_curation.py` | junk commits pruned on completion, `dropped` in payload |
+| `test_external_completion.py` | phantom commit rejected; real commit → COMPLETED with populated scrutiny validation → milestone advances; unblocks blocked mission |
+| `test_worker_transcripts.py` | `.raw.json` persisted + parses; `.txt` kept; 5 MB cap |
+| `test_worker_progress.py` | ≥1 `WORKER_PROGRESS` mid-run; deduped; none after terminal |
+| `test_repo_analysis.py` | structured digest; paragraph-boundary cuts; `is_repo` on plain + worktree layouts even from a foreign cwd |
 
 ### Integration — full orchestration path (`tests/integration/test_lifecycle.py`)
 

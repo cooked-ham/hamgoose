@@ -54,6 +54,7 @@ class MilestoneStatus(str, Enum):
 
 class FailureClass(str, Enum):
     MODEL_FAILURE = "MODEL_FAILURE"
+    MODEL_LIMIT_FAILURE = "MODEL_LIMIT_FAILURE"
     PROVIDER_FAILURE = "PROVIDER_FAILURE"
     WORKER_TIMEOUT = "WORKER_TIMEOUT"
     WORKER_CRASH = "WORKER_CRASH"
@@ -69,6 +70,7 @@ class FailureClass(str, Enum):
 #: Failure classes that are considered safely retryable.
 RETRYABLE_FAILURES = {
     FailureClass.MODEL_FAILURE,
+    FailureClass.MODEL_LIMIT_FAILURE,
     FailureClass.PROVIDER_FAILURE,
     FailureClass.WORKER_TIMEOUT,
     FailureClass.WORKER_CRASH,
@@ -91,6 +93,8 @@ class WorkerRecord:
     exit_code: Optional[int] = None
     backend: Optional[str] = None
     pid: Optional[int] = None
+    #: wall-clock seconds the dispatch ran (derived from started/completed).
+    duration_s: Optional[float] = None
 
 
 @dataclass
@@ -140,6 +144,8 @@ class Feature:
     expected_paths: List[str] = field(default_factory=list)
     prohibited_paths: List[str] = field(default_factory=list)
     attempts: int = 0
+    #: manual missionRetryFeature calls since the last automated attempt
+    manual_retries: int = 0
     max_attempts: int = 3
     worker: WorkerRecord = field(default_factory=WorkerRecord)
     commits: List[str] = field(default_factory=list)

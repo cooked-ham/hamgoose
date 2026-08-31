@@ -4,7 +4,7 @@
 
 [project]
 name = "hamgoose"
-version = "0.1.7"
+version = "0.1.8"
 description = "Factory-Droid-style Mission orchestration extension for Goose"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -54,3 +54,8 @@ testpaths = ["tests"]
 markers = [
     "realgoose: real Goose + LLM integration tests (slower; skipped if goose missing)",
 ]
+# HG-17: deterministic runs on Windows. The default temp root
+# (…\Temp\pytest-of-<user>) can be permission-broken and error the whole
+# session (35 PermissionErrors observed on the dev box); a local basetemp plus
+# a writable cache dir make `pytest` work with zero manual flags, CI or local.
+addopts = ["--basetemp=.pytest_tmp"]

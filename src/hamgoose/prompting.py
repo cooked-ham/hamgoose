@@ -43,6 +43,19 @@ HARD RULES
 Do NOT claim success unless the acceptance criteria are actually met.
 """
 
+#: hard exploration budget (HG-05): every observed death was 100 turns of
+#: analysis with zero file writes. The contract block below stays byte-identical.
+_BUDGET = """
+TIME/ANALYSIS BUDGET (HARD)
+===========================
+- Analysis phase: at most 5 bullets, one screen total. Then STOP analyzing.
+- Write the first file change BEFORE any second analysis pass.
+- A minimal working change with a real test beats a complete analysis.
+- If you cannot verify locally, implement the minimal version and say so in
+  "notes" - do not keep exploring.
+- You are implement-first: diagnose only what blocks writing the change.
+"""
+
 
 def worker_prompt(mission: Mission, feature: Feature, git_info: dict, project_context: str) -> str:
     deps = "\n".join(
@@ -55,7 +68,19 @@ def worker_prompt(mission: Mission, feature: Feature, git_info: dict, project_co
     prohibited = ", ".join(feature.prohibited_paths) or "(none)"
     cmds = "\n".join("  $ " + c for c in feature.validation_commands) or "  (use the project's normal build/test commands)"
     prior = ""
-    if feature.attempts > 0 and feature.failure_detail:
+    if str(feature.failure) == "MODEL_LIMIT_FAILURE" and feature.failure_detail:
+        # HG-04 resume-on-retry: the previous run was cut off mid-analysis at
+        # the model's output limit. Forward the truncated tail and forbid
+        # re-analysis - the next run must write code immediately.
+        prior = (
+            "\nRESUMING A CUT-OFF RUN (MODEL_LIMIT_FAILURE)\n"
+            "Your previous run was cut off mid-analysis at the model's output "
+            "limit. Do NOT re-analyze. Implement the feature now, minimally, "
+            "then report.\n"
+            "Truncated final message from the previous run:\n"
+            + feature.failure_detail + "\n"
+        )
+    elif feature.attempts > 0 and feature.failure_detail:
         prior = (
             "\nPREVIOUS ATTEMPT FAILED (change your approach; do not repeat the same failure)\n"
             "  class: " + str(feature.failure) + "\n  detail: " + feature.failure_detail + "\n"
@@ -94,7 +119,7 @@ USER CONSTRAINTS (stated by the user; respect them)
 GIT
 {json.dumps(git_info)}
 
-{_RULES}{prior}
+{_RULES}{_BUDGET}{prior}
 Implement the feature now. Keep the work and final summary focused on this
 feature; do not spend turns narrating or researching unrelated code.{_WORKER_CONTRACT}"""
 

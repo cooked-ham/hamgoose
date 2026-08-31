@@ -12,7 +12,7 @@ from hamgoose.worker import MockBackend
 
 
 def make_controller(repo, simulator=None, checker=None, config_over=None, git=False):
-    cfg = Config.load(config_over)
+    cfg = Config.load(config_over, repo=repo)
     if not git:
         cfg.git.enabled = False
         cfg.git.use_worktrees = False

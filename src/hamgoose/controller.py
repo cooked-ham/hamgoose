@@ -36,7 +36,7 @@ from .models import (
     SteeringNote,
     ValidationResult,
 )
-from .semantic import SemanticClient, extract_json
+from .semantic import SemanticClient, SemanticResult, extract_json
 from .state import feature_transition, milestone_transition, mission_transition
 from .validator import ValidationBackend
 from .worker import WorkerBackend, WorkerResult, _default_simulator
@@ -52,6 +52,17 @@ def _deep_merge(base: Dict[str, Any], override: Optional[Dict[str, Any]]) -> Dic
     return out
 
 
+def _version() -> str:
+    """HG-16: single source of truth for the running extension version -
+    installed package metadata, falling back to the module literal."""
+    try:
+        from . import __version__
+
+        return __version__
+    except Exception:
+        return "unknown"
+
+
 class MissionController:
     def __init__(
         self,
@@ -64,7 +75,7 @@ class MissionController:
         project_context: Optional[str] = None,
     ):
         self.repo = os.path.abspath(repo)
-        self.config = config or Config.load()
+        self.config = config or Config.load(repo=repo)
         self.worker_backend = worker_backend
         self.validation_backend = validation_backend
         self.semantic = semantic or SemanticClient(self.config)
@@ -150,7 +161,11 @@ class MissionController:
         )
         m.created_at = store.utcnow()
         store.save_mission(m)
-        store.append_event(m, "MISSION_CREATED", entity=m.id, payload={"goal": goal, "rules": rules or ""})
+        # HG-16: stamp the extension version so a stale installed copy is
+        # visible on the very first event (the M-2026-1909541C forensics root
+        # cause was version skew between working tree and launched install).
+        store.append_event(m, "MISSION_CREATED", entity=m.id,
+                           payload={"goal": goal, "rules": rules or "", "hamgoose_version": _version()})
 
         mission_transition(m.status, MissionStatus.ANALYZING)
         m.status = MissionStatus.ANALYZING
@@ -165,11 +180,30 @@ class MissionController:
         status = gm.status()
         m.base_commit = status.get("base_commit")
         m.readiness = planmod.check_readiness(self.repo)
+        m.readiness["hamgoose_version"] = _version()
         instructions = self._discover_instructions()
         summary = self._repo_summary()
         m.repo_analysis = {"git": status, "instructions": instructions, "summary": summary}
-        store.append_event(m, "REPOSITORY_ANALYZED", entity=m.id, payload={"summary_len": len(summary)})
+        store.append_event(m, "REPOSITORY_ANALYZED", entity=m.id,
+                           payload={"summary_len": len(summary), "is_repo": bool(status.get("is_repo")),
+                                    "hamgoose_version": _version()})
+        # HG-07: bounded model-capability preflight - reports only, never
+        # switches models, never fails mission creation.
+        self._model_preflight(m)
         store.save_mission(m)
+
+    @staticmethod
+    def _para_cut(text: str, limit: int) -> str:
+        """HG-15: cut at a paragraph boundary instead of mid-word."""
+        if len(text) <= limit:
+            return text
+        window = text[:limit]
+        cut = window.rfind("\n\n")
+        if cut < limit // 2:
+            cut = window.rfind("\n")
+        if cut < limit // 4:
+            cut = limit
+        return window[:cut].rstrip() + "\n[...truncated at paragraph boundary]"
 
     def _discover_instructions(self) -> str:
         parts = []
@@ -177,17 +211,124 @@ class MissionController:
             p = os.path.join(self.repo, name)
             if os.path.exists(p):
                 try:
-                    parts.append("### {}\n{}".format(name, open(p, encoding="utf-8", errors="ignore").read()[:4000]))
+                    parts.append("### {}\n{}".format(name, self._para_cut(
+                        open(p, encoding="utf-8", errors="ignore").read(), 4000)))
                 except OSError:
                     pass
-        return "\n\n".join(parts)[:12000]
+        return self._para_cut("\n\n".join(parts), 12000)
 
     def _repo_summary(self) -> str:
+        """HG-15: structured digest instead of a fixed 1 826-char listing.
+        Varies with repo content: tree (depth 2) + README head + plan/progress
+        docs when present."""
+        lines: List[str] = []
+
+        skip = {".git", ".goose", "__pycache__", ".venv", "venv", "node_modules",
+                ".pytest_cache", ".mypy_cache", "dist", "build", ".idea", ".vscode"}
+
+        def _tree(root: str, prefix: str, depth: int, budget: List[int]) -> None:
+            try:
+                entries = sorted(e.name + ("/" if e.is_dir() else "") for e in os.scandir(root))
+            except OSError:
+                return
+            for name in entries:
+                base = name.rstrip("/")
+                if base in skip:
+                    continue
+                if budget[0] <= 0:
+                    return
+                budget[0] -= 1
+                lines.append(prefix + name)
+                if name.endswith("/") and depth > 1:
+                    _tree(os.path.join(root, base), prefix + "  ", depth - 1, budget)
+
+        lines.append("top-level tree (depth 2):")
+        _tree(self.repo, "  ", 2, [120])
+        for name, cap in (("README.md", 8192), ("PLAN.md", 4096), ("PROGRESS.md", 4096)):
+            p = os.path.join(self.repo, name)
+            if os.path.exists(p):
+                try:
+                    head = self._para_cut(open(p, encoding="utf-8", errors="ignore").read(), cap)
+                except OSError:
+                    continue
+                lines.append("\n### {} (head)\n{}".format(name, head))
+        return "\n".join(lines)
+
+    def _repo_summary_slice(self) -> str:
+        """HG-06: minimal analysis slice for the planner's retry path - top
+        entries + README head only, so a timed-out planner gets a second,
+        much smaller chance instead of dying silently."""
         try:
-            entries = sorted(os.listdir(self.repo))[:80]
+            entries = sorted(os.listdir(self.repo))[:40]
         except OSError:
             entries = []
-        return "top-level entries: " + ", ".join(entries)
+        out = ["top-level entries: " + ", ".join(e for e in entries if e not in (".git",))]
+        p = os.path.join(self.repo, "README.md")
+        if os.path.exists(p):
+            try:
+                out.append("README head:\n" + self._para_cut(open(p, encoding="utf-8", errors="ignore").read(), 2000))
+            except OSError:
+                pass
+        return "\n".join(out)
+
+    def _model_preflight(self, m: Mission) -> None:
+        """HG-07: one bounded smoke leaf (<=60 s, --max-turns 2) on the RESOLVED
+        worker model. Records verdict + evidence in repo_analysis.model_check
+        and a readiness line. Reports only - never switches models, never
+        blocks mission creation."""
+        cfg = self._cfg(m)
+        if not cfg.execution.model_preflight:
+            return
+        if getattr(self.worker_backend, "name", "") != "goose_run":
+            return  # a mock backend cannot speak for the resolved model
+        role = cfg.resolved_worker()
+        model = role.get("model") or "(inherit -> active goose model)"
+        prompt = (
+            "You are a capability smoke test for a coding worker model. "
+            "Reply with a single fenced JSON block and nothing else:\n"
+            "```json\n{\"ok\": true, \"note\": \"reply with one short sentence proving you can structure output\"}\n```\n"
+        )
+        check: Dict[str, Any] = {"model": model, "provider": role.get("provider") or "(inherit)"}
+        try:
+            res = self.semantic.smoke(prompt, role="worker", timeout=60, max_turns=2)
+        except Exception as e:  # preflight must never kill creation
+            check.update({"ok": False, "verdict": "WARN", "limit_evidence": "smoke error: {}".format(e)[:300], "duration": None})
+            m.repo_analysis["model_check"] = check
+            m.readiness["Worker model"] = "WARN"
+            m.readiness.setdefault("notes", []).append(
+                "Worker model: {} - WARN (preflight error; see model_check)".format(model))
+            return
+        from .semantic import extract_json as _extract_json
+
+        evidence = (res.raw_tail or "") + "\n" + (res.text or "")
+        limit_evidence = ""
+        for marker in ("outputTokenLimitReached", '"finish_reason": "length"', "output token limit"):
+            if marker.lower() in evidence.lower():
+                limit_evidence = marker
+                break
+        import re as _re
+
+        tokens = _re.search(r'"output_tokens":\s*(\d+)', evidence)
+        data = _extract_json(res.text or "") if not res.timed_out else None
+        if res.timed_out:
+            verdict, ok = "SMALL-OUTPUT-BUDGET", False
+        elif data and data.get("ok"):
+            verdict, ok = "smoke OK", True
+        elif res.text:
+            verdict, ok = "WARN (no structured output)", False
+        else:
+            verdict, ok = "SMALL-OUTPUT-BUDGET" if limit_evidence else "WARN", False
+        check.update({
+            "ok": ok,
+            "verdict": verdict,
+            "output_tokens": int(tokens.group(1)) if tokens else None,
+            "limit_evidence": limit_evidence,
+            "duration": round(res.duration, 1),
+        })
+        m.repo_analysis["model_check"] = check
+        m.readiness["Worker model"] = "PASS" if ok else "WARN"
+        m.readiness.setdefault("notes", []).append(
+            "Worker model: {} - {}".format(model, verdict))
 
     def plan(
         self,
@@ -201,16 +342,25 @@ class MissionController:
 
         if features is None:
             self._report("decomposing mission plan (isolated goose run)", 30, 100)
-            plan_dict = self._generate_plan(m)
+            plan_dict, planner_info = self._generate_plan_detailed(m)
             self._report("plan generated; validating structure", 80, 100)
         else:
             plan_dict = {"milestones": milestones or [], "features": features}
+            planner_info = {"attempts": 1, "timed_out": False, "raw_tail": ""}
             self._report("validating plan structure", 80, 100)
         if not plan_dict.get("features"):
             # Fail loudly instead of presenting an empty plan for approval:
             # a 0-feature plan is a planner failure, not a plan.
             m.repo_analysis["plan_error"] = "planner returned no features (goal may be too vague for the repo analysis)"
-            store.append_event(m, "PLAN_FAILED", entity=m.id, payload={"reason": "no features"})
+            # HG-06: no silent planner death - the failure event carries the
+            # evidence (timed_out, raw tail, attempts) that was unrecoverable
+            # in missions 3 & 4.
+            store.append_event(m, "PLAN_FAILED", entity=m.id, payload={
+                "reason": "no features",
+                "timed_out": bool(planner_info.get("timed_out")),
+                "raw_tail": redact.redact(str(planner_info.get("raw_tail") or ""))[:2000],
+                "attempts": int(planner_info.get("attempts", 1)),
+            })
             store.save_mission(m)
             raise ValueError(
                 "empty plan (0 features): the goal could not be decomposed from the "
@@ -227,13 +377,38 @@ class MissionController:
         self._report("plan ready for approval", 100, 100)
         return m
 
-    def _generate_plan(self, m: Mission) -> Dict[str, Any]:
-        if self.planner is not None:
-            return self.planner(m, m.goal)
+    def _generate_plan_detailed(self, m: Mission) -> tuple:
+        """HG-06: planner with its own timeout budget, bounded retries and full
+        evidence. Returns (plan_dict, info) where info = {"timed_out": bool,
+        "raw_tail": str, "attempts": int} so every planner exit produces a
+        distinguishable event upstream."""
+        cfg = self._cfg(m)
+        attempts = 0
+        last_tail = ""
+        timed_out = False
         max_features = 12
-        prompt = prompting.decompose_prompt(m.goal, m.repo_analysis.get("summary", ""), self._project_context(m), max_features)
-        text = self.semantic.complete(prompt, role="orchestrator")
-        data = extract_json(text) or {}
+
+        def _run(prompt: str):
+            nonlocal attempts, last_tail, timed_out
+            attempts += 1
+            if hasattr(self.semantic, "complete_detailed"):
+                res = self.semantic.complete_detailed(prompt, role="orchestrator",
+                                                      timeout=cfg.execution.planner_timeout)
+                timed_out = timed_out or res.timed_out
+                last_tail = res.raw_tail or (res.text[-2000:] if res.text else res.raw_tail)
+            else:  # legacy/test semantic client
+                text = self.semantic.complete(prompt, role="orchestrator")
+                res = SemanticResult(text=text)
+                last_tail = text[-2000:]
+            return extract_json(res.text) or {}
+
+        if self.planner is not None:
+            attempts = 1
+            return self.planner(m, m.goal), {"timed_out": False, "raw_tail": "", "attempts": attempts}
+
+        prompt = prompting.decompose_prompt(m.goal, m.repo_analysis.get("summary", ""),
+                                            self._project_context(m), max_features)
+        data = _run(prompt)
         if not data.get("features"):
             # One grounded retry: a vague goal + a weak first response should not
             # silently become an empty plan (plan() rejects those).
@@ -245,10 +420,20 @@ class MissionController:
                 "return at least one milestone with at least one feature - an empty "
                 "plan is a failure."
             )
-            data = extract_json(self.semantic.complete(retry, role="orchestrator")) or data
-        return data
+            data = _run(retry) or data
+        if (not data.get("features")) and (timed_out or attempts > 0):
+            # HG-06 final fallback: retry ONCE with a much smaller repo-analysis
+            # slice (top-level tree + README head) - a big repo digest can push
+            # a small model over its input/output budget.
+            small = prompting.decompose_prompt(m.goal, self._repo_summary_slice(), "", max_features)
+            data = _run(small) or data
+        return data, {"timed_out": timed_out, "raw_tail": last_tail, "attempts": attempts}
 
     def _apply_plan(self, m: Mission, plan_dict: Dict[str, Any], note: str, revision: int) -> None:
+        # HG-10 regression guard: a 0-feature "plan" must never reach the plan
+        # bookkeeping / approval path, no matter who calls this.
+        if not plan_dict.get("features"):
+            raise ValueError("refusing to apply a 0-feature plan (planner failure, not a plan)")
         cfg = self._cfg(m)
         # milestones
         for msd in plan_dict.get("milestones", []) or []:
@@ -461,6 +646,7 @@ class MissionController:
     def _create_fix_features(self, m: Mission, ms: Milestone, results: List[ValidationResult]) -> None:
         cfg = self._cfg(m)
         seen = set()
+        n_before = len(m.features)
         for r in results:
             for f in r.findings:
                 target = f.feature if f.feature in m.features and f.feature != "milestone" else None
@@ -499,6 +685,15 @@ class MissionController:
                     ms.features.append(new_id)
                 store.append_event(m, "FIX_FEATURE_CREATED", entity=new_id, payload={"for": src.id})
                 src.failure_detail = (src.failure_detail or "") + "\n[fix {} created]".format(new_id)
+        # HG-10: the controller mutates plan structure here - record a revision
+        # so the store-level "external plan change" detector stays meaningful.
+        if len(m.features) > n_before:
+            m.current_revision += 1
+            m.plan_revisions.append(PlanRevision(
+                number=m.current_revision, created_at=store.utcnow(),
+                note="correction fixes for {}".format(ms.id),
+                feature_ids=list(m.features.keys()), milestone_ids=list(m.milestones.keys()),
+            ))
 
     def _final_phase(self, m: Mission) -> bool:
         # all milestones passed -> final validation gate
@@ -543,6 +738,7 @@ class MissionController:
     def _create_final_fixes(self, m: Mission, corr: Milestone, r: ValidationResult) -> None:
         cfg = self._cfg(m)
         seen = set()
+        n_before = len(m.features)
         for f in r.findings:
             target = f.feature if f.feature in m.features and f.feature not in ("-", "milestone") else None
             if target:
@@ -572,6 +768,13 @@ class MissionController:
             if nid not in corr.features:
                 corr.features.append(nid)
             store.append_event(m, "FIX_FEATURE_CREATED", entity=nid, payload={"for": f.feature})
+        if len(m.features) > n_before:
+            m.current_revision += 1
+            m.plan_revisions.append(PlanRevision(
+                number=m.current_revision, created_at=store.utcnow(),
+                note="final correction fixes",
+                feature_ids=list(m.features.keys()), milestone_ids=list(m.milestones.keys()),
+            ))
 
     def _set_blocked(self, m: Mission, ms: Milestone, stuck: List[Feature]) -> None:
         reasons = "; ".join("{}:{}".format(f.id, f.failure or f.status.value) for f in stuck)
@@ -613,7 +816,30 @@ class MissionController:
 
         def _launch(f: Feature) -> WorkerResult:
             prompt = prompting.worker_prompt(m, f, self._git_info(f, m), self._project_context(m))
-            return self.worker_backend.run(prompt, f.workdir or self.repo, role, f, cfg.execution.worker_timeout)
+            # HG-14: forward mid-run progress so a live worker is visible
+            # (best-effort, deduped, stops when the leaf exits).
+            state: Dict[str, Any] = {"last": None}
+
+            def _progress(info: Dict[str, Any]) -> None:
+                sig = (info.get("run_id"), info.get("bytes"), info.get("turn_hint"))
+                if sig == state["last"]:
+                    return
+                state["last"] = sig
+                try:
+                    store.append_event(m, "WORKER_PROGRESS", entity=f.id, payload={
+                        "feature": f.id, "run_id": info.get("run_id"),
+                        "turn_hint": info.get("turn_hint"), "bytes": info.get("bytes"),
+                        "elapsed": info.get("elapsed")})
+                except Exception:
+                    pass
+
+            try:
+                return self.worker_backend.run(prompt, f.workdir or self.repo, role, f,
+                                               cfg.execution.worker_timeout, on_progress=_progress)
+            except TypeError:
+                # backend predates the on_progress kwarg
+                return self.worker_backend.run(prompt, f.workdir or self.repo, role, f,
+                                               cfg.execution.worker_timeout)
 
         if len(batch) == 1:
             results = {batch[0].id: _launch(batch[0])}
@@ -652,14 +878,37 @@ class MissionController:
         resolved_role = cfg.resolved_worker()
         f.worker.provider = resolved_role.get("provider") or cfg.worker.provider
         f.worker.model = resolved_role.get("model") or cfg.worker.model
+        # HG-04: record wall-clock duration so a run that misses the timeout
+        # by <10 s of wall time is still classified as a timeout.
+        duration = None
+        try:
+            if f.worker.started_at:
+                from datetime import datetime
 
-        # capture the worker's transcript (redacted)
+                t0 = datetime.fromisoformat(f.worker.started_at)
+                t1 = datetime.fromisoformat(f.worker.completed_at)
+                duration = (t1 - t0).total_seconds()
+            f.worker.duration_s = duration
+        except Exception:
+            f.worker.duration_s = None
+
+        # capture the worker's transcript (redacted) ...
         try:
             wdir = store.workers_dir(m.repo, m.id)
             with open(os.path.join(wdir, (res.run_id or f.id) + ".txt"), "w", encoding="utf-8") as fh:
                 fh.write(res.raw or "")
         except OSError:
             pass
+        # HG-01: ... AND the full raw stdout (best-effort, capped at capture)
+        # as .raw.json - the forensic evidence that makes limit-death
+        # classification possible after the fact.
+        if res.raw_stdout:
+            try:
+                wdir = store.workers_dir(m.repo, m.id)
+                with open(os.path.join(wdir, (res.run_id or f.id) + ".raw.json"), "w", encoding="utf-8") as fh:
+                    fh.write(res.raw_stdout)
+            except OSError:
+                pass
 
         # git: commit in worktree, merge into base, detect conflict
         conflict = False
@@ -691,7 +940,7 @@ class MissionController:
         )
 
         # classify
-        cls = self._classify(f, res, changed, conflict)
+        cls = self._classify(f, res, changed, conflict, duration=duration, worker_timeout=cfg.execution.worker_timeout)
         if conflict:
             self._handle_conflict(m, f, cfg)
             return
@@ -700,7 +949,12 @@ class MissionController:
             f.status = FeatureStatus.COMPLETED
             f.failure = None
             store.append_event(m, "WORKER_FINISHED", entity=f.id, payload={"commit": commit})
-            store.append_event(m, "FEATURE_COMPLETED", entity=f.id, payload={"commit": commit})
+            # HG-12: curate the commit list - keep only commits reachable from
+            # the feature's branch tip; junk hashes are recorded, not silently
+            # kept forever.
+            dropped = self._curate_commits(m, f, cfg)
+            store.append_event(m, "FEATURE_COMPLETED", entity=f.id,
+                               payload={"commit": commit, "dropped": dropped})
             if f.fix_of:
                 self._resolve_fix(m, f)
             store.save_mission(m)
@@ -710,7 +964,9 @@ class MissionController:
         f.attempts += 1
         f.failure = cls.value
         f.failure_detail = redact.redact((res.blocked_reason or res.summary or res.raw or "worker failed")[:1500])
-        store.append_event(m, "WORKER_FAILED", entity=f.id, payload={"class": cls.value, "attempt": f.attempts})
+        store.append_event(m, "WORKER_FAILED", entity=f.id,
+                           payload={"class": cls.value, "attempt": f.attempts,
+                                    "duration": duration, "timed_out": res.timed_out})
 
         if cls == FailureClass.USER_BLOCKED:
             feature_transition(f.status, FeatureStatus.BLOCKED)
@@ -721,10 +977,14 @@ class MissionController:
             store.save_mission(m)
             return
 
-        if f.attempts >= f.max_attempts:
+        # HG-09: the attempt budget counts automated + manual retries.
+        budget_used = f.attempts + f.manual_retries
+        if budget_used >= f.max_attempts:
             feature_transition(f.status, FeatureStatus.FAILED)
             f.status = FeatureStatus.FAILED
-            store.append_event(m, "FEATURE_FAILED", entity=f.id, payload={"class": cls.value})
+            store.append_event(m, "FEATURE_FAILED", entity=f.id,
+                               payload={"class": cls.value, "attempts": f.attempts,
+                                        "manual_retries": f.manual_retries})
             store.save_mission(m)
             return
 
@@ -733,19 +993,52 @@ class MissionController:
             # change strategy: keep prior failure evidence in the prompt
             feature_transition(f.status, FeatureStatus.NEEDS_FIX)
             f.status = FeatureStatus.NEEDS_FIX
-            store.append_event(m, "FEATURE_RETRIED", entity=f.id, payload={"class": cls.value, "attempt": f.attempts})
+            store.append_event(m, "FEATURE_RETRIED", entity=f.id,
+                               payload={"class": cls.value, "attempt": f.attempts})
         else:
             feature_transition(f.status, FeatureStatus.BLOCKED)
             f.status = FeatureStatus.BLOCKED
             m.block_reason = "feature {} hit non-retryable failure {}".format(f.id, cls.value)
             self._transition_mission(m, MissionStatus.BLOCKED)
 
-    def _classify(self, f: Feature, res: WorkerResult, changed: bool, conflict: bool) -> Optional[FailureClass]:
+    def _curate_commits(self, m: Mission, f: Feature, cfg: Config) -> List[str]:
+        """HG-12: prune feature.commits to what git can still vouch for."""
+        if not (cfg.git.enabled and GitManager(self.repo).is_repo() and f.commits):
+            return []
+        keep: set = set()
+        try:
+            gm = GitManager(f.workdir or self.repo)
+            if f.branch:
+                keep.update(gm.commits_reachable_from(f.branch, base=cfg.git.base_branch, cwd=f.workdir or self.repo))
+            if m.head_commit:
+                keep.update(gm.commits_reachable_from(m.head_commit))
+        except Exception:
+            return []
+        if not keep:
+            return []  # cannot compute reachability: never drop evidence blindly
+        return store.prune_commits(m, f.id, keep)
+
+    def _classify(self, f: Feature, res: WorkerResult, changed: bool, conflict: bool,
+                  duration: Optional[float] = None, worker_timeout: Optional[int] = None) -> Optional[FailureClass]:
         if conflict:
             return FailureClass.MERGE_CONFLICT
-        if res.timed_out:
+        # HG-04 boundary fix: a run that finished a hair under the kill budget
+        # (observed: 420.8 s vs 420 s) is a timeout death, not an
+        # implementation failure.
+        timeout_grace = 10
+        if res.timed_out or (
+            worker_timeout is not None and duration is not None and duration >= worker_timeout - timeout_grace
+        ):
             return FailureClass.WORKER_TIMEOUT
         raw = (res.raw or "").lower()
+        evidence = raw + "\n" + (res.raw_stdout or "").lower()
+        # HG-04: model output-token-limit death - the leaf exits 0 with a
+        # "completed" envelope but was truncated mid-flight. This was
+        # indistinguishable from IMPLEMENTATION_FAILURE and burned retries.
+        for sig in ('"outputtokenlimitreached": true', '"finish_reason": "length"',
+                    "output token limit", "maximum context length"):
+            if sig in evidence:
+                return FailureClass.MODEL_LIMIT_FAILURE
         if res.exit_code not in (0, None):
             for sig in ("401", "403", "429", "quota", "rate limit", "api key", "provider", "unauthorized", "connection"):
                 if sig in raw:
@@ -757,7 +1050,11 @@ class MissionController:
             if not changed and not res.changed_files:
                 return FailureClass.IMPLEMENTATION_FAILURE  # claims done but no real change
             return None  # accepted
-        # claimed failed
+        # claimed failed / unparseable — provider quota can surface with exit 0
+        # (the leaf "completed" but the model answered with a quota error)
+        for sig in ("rate limit", "usage limit", "quota exceeded", "too many requests"):
+            if sig in raw:
+                return FailureClass.PROVIDER_FAILURE
         for sig in ("test failed", "tests failed", "failed test", "assertion"):
             if sig in raw:
                 return FailureClass.TEST_FAILURE
@@ -990,7 +1287,126 @@ class MissionController:
         f.failure_detail = ""
         feature_transition(f.status, FeatureStatus.READY)
         f.status = FeatureStatus.READY
-        store.append_event(m, "FEATURE_RETRIED", entity=f.id, payload={"manual": True})
+        # HG-09: manual retries count toward the attempt budget. The event
+        # always tells the truth about budget state.
+        f.manual_retries += 1
+        beyond = (f.attempts + f.manual_retries) >= f.max_attempts
+        store.append_event(m, "FEATURE_RETRIED", entity=f.id,
+                           payload={"manual": True, "beyond_budget": beyond,
+                                    "attempts": f.attempts, "manual_retries": f.manual_retries,
+                                    "max_attempts": f.max_attempts})
+        store.save_mission(m)
+        return m
+
+    # ------------------------------------------------------------------ #
+    # external completion (HG-13): lead-agent/human-implemented work
+    # ------------------------------------------------------------------ #
+    def complete_feature_external(
+        self,
+        mission_id_: str,
+        feature_id: str,
+        summary: str,
+        changed_files: Optional[List[str]] = None,
+        tests: Optional[List[str]] = None,
+        commit: Optional[str] = None,
+        notes: Optional[List[str]] = None,
+    ) -> Mission:
+        """First-class path for work implemented outside the worker pipeline
+        (by the lead agent or a human). Replaces hand-rolled store writes:
+
+        - verifies the commit actually exists in git (never trust claims)
+        - runs the feature's validation_commands and records results
+        - runs a REAL scrutiny validation on the diff (populated validation[])
+        - appends proper events, curates commits, continues the normal flow
+        """
+        m = self._get(mission_id_)
+        f = m.features.get(feature_id)
+        if not f:
+            raise ValueError("unknown feature {}".format(feature_id))
+        if f.status in (FeatureStatus.SUPERSEDED, FeatureStatus.CANCELLED):
+            raise ValueError("feature {} is terminal ({})".format(feature_id, f.status.value))
+        cfg = self._cfg(m)
+
+        # 1. verify the commit exists and derive changed files from git reality
+        gm = GitManager(self.repo)
+        if commit and not gm.commit_exists(commit):
+            raise ValueError("commit {} not found in repository - external completion "
+                             "requires the work to exist in git".format(commit))
+        if commit and not changed_files:
+            parent = gm._run(["rev-parse", "{}^".format(commit)])
+            changed_files = gm.changed_files_between(parent, commit) if parent else []
+        changed_files = changed_files or []
+
+        # 2. run the feature's validation commands (bounded)
+        command_results = []
+        run_cwd = f.workdir if (f.workdir and os.path.isdir(f.workdir)) else self.repo
+        for cmd in (f.validation_commands or [])[:10]:
+            try:
+                import subprocess as _sp
+
+                proc = _sp.run(cmd, shell=True, cwd=run_cwd,
+                               capture_output=True, text=True, timeout=300)
+                command_results.append({"command": cmd, "exit_code": proc.returncode})
+            except Exception as e:
+                command_results.append({"command": cmd, "exit_code": None, "error": str(e)[:200]})
+
+        # 3. real scrutiny validation on the diff (the "passed with empty
+        # validation" hole closes here)
+        base, head = self._base_head(m)
+        head = commit or head
+        vr = self.validation_backend.run("scrutiny", m, f.milestone, base, head,
+                                         self._validation_workdir(m), self._project_context(m))
+
+        f.result = FeatureResult(
+            summary=summary, changed_files=changed_files, tests=tests or [],
+            notes=(notes or []) + ["completed externally"],
+            raw="external completion",
+        )
+        if commit:
+            f.commits.append(commit)
+        f.worker.backend = "external"
+
+        # 4. record + transition through legal states to COMPLETED
+        ms = m.milestones.get(f.milestone)
+        if vr:
+            if ms:
+                ms.validation.append(vr)
+            self._save_validation(m, f.milestone, vr)
+        store.append_event(m, "WORKER_FINISHED", entity=f.id,
+                           payload={"backend": "external", "commit": commit})
+        if f.status != FeatureStatus.COMPLETED:
+            # legality: FAILED/BLOCKED/PENDING/READY/NEEDS_FIX -> READY -> RUNNING -> COMPLETED
+            if f.status not in (FeatureStatus.RUNNING, FeatureStatus.VERIFYING):
+                if f.status != FeatureStatus.READY:
+                    feature_transition(f.status, FeatureStatus.READY)
+                    f.status = FeatureStatus.READY
+                feature_transition(f.status, FeatureStatus.RUNNING)
+                f.status = FeatureStatus.RUNNING
+            feature_transition(f.status, FeatureStatus.COMPLETED)
+            f.status = FeatureStatus.COMPLETED
+        f.failure = None
+        dropped = self._curate_commits(m, f, cfg)
+        store.append_event(m, "FEATURE_COMPLETED", entity=f.id, payload={
+            "external": True, "commit": commit,
+            "validation": {"passed": vr.passed if vr else None, "kind": "scrutiny"},
+            "commands": command_results, "dropped": dropped,
+        })
+        if f.fix_of:
+            self._resolve_fix(m, f)
+        # unblock: if this completion removed the last stuck feature, the
+        # mission/milestone can proceed without a separate manual resume
+        if ms and ms.status == MilestoneStatus.BLOCKED:
+            stuck = [x for x in m.milestone_features(ms.id)
+                     if x.status in (FeatureStatus.FAILED, FeatureStatus.BLOCKED)]
+            if not stuck:
+                milestone_transition(ms.status, MilestoneStatus.RUNNING)
+                ms.status = MilestoneStatus.RUNNING
+                if m.status == MissionStatus.BLOCKED:
+                    m.block_reason = ""
+                    self._transition_mission(m, MissionStatus.RUNNING)
+                    store.append_event(m, "MISSION_RESUMED", entity=m.id,
+                                       payload={"reason": "external completion unblocked",
+                                                "feature": f.id})
         store.save_mission(m)
         return m
 
@@ -1082,6 +1498,36 @@ class MissionController:
     def readiness(self, mission_id_: str) -> str:
         m = self._get(mission_id_)
         return render.readiness_md(m.readiness)
+
+    def config_summary(self, mission_id_: str) -> str:
+        """HG-08: the EFFECTIVE config (resolved values, never 'inherit') as
+        echoed by missionCreate so hand-edits and surprises are visible."""
+        m = self._get(mission_id_)
+        cfg = self._cfg(m)
+        ex = cfg.execution
+        lines = [
+            "EFFECTIVE CONFIG (mission {})".format(mission_id_),
+            "  worker     : provider={} model={} max_turns={}".format(
+                cfg.resolved_worker().get("provider") or "(inherit)",
+                cfg.resolved_worker().get("model") or "(inherit)",
+                cfg.worker.max_turns),
+            "  validator  : provider={} model={}".format(
+                cfg.resolved_validator().get("provider") or "(inherit)",
+                cfg.resolved_validator().get("model") or "(inherit)"),
+            "  execution  : concurrency={} max_attempts={} worker_timeout={}s planner_timeout={}s semantic_timeout={}s".format(
+                ex.max_concurrent_workers, ex.max_feature_attempts,
+                ex.worker_timeout, ex.planner_timeout, ex.semantic_timeout),
+            "  validation : scrutiny={} user_testing={} max_corrections={}".format(
+                cfg.validation.scrutiny, cfg.validation.user_testing,
+                cfg.validation.max_correction_attempts),
+            "  git        : enabled={} worktrees={} auto_commit={}".format(
+                cfg.git.enabled, cfg.git.use_worktrees, cfg.git.auto_commit_features),
+        ]
+        mc = (m.repo_analysis or {}).get("model_check") or {}
+        if mc:
+            lines.append("  model check: {} - {} (output_tokens={}, duration={}s)".format(
+                mc.get("model"), mc.get("verdict"), mc.get("output_tokens"), mc.get("duration")))
+        return "\n".join(lines)
 
     def list(self) -> List[Dict[str, Any]]:
         return store.list_missions(self.repo)

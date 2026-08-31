@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from .models import Mission
+from .models import Mission, PlanRevision
 from . import render
 
 
@@ -98,22 +98,108 @@ def load_mission(repo: str, mission_id: str) -> Optional[Mission]:
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8") as f:
-        return Mission.from_dict(json.load(f))
+        m = Mission.from_dict(json.load(f))
+    # HG-11: events.jsonl is the canonical append-only log; the mission.events
+    # list is a derived view hydrated on load (never persisted).
+    m.events = read_events(repo, mission_id)
+    return m
+
+
+def _prev_state(repo: str, mission_id: str) -> Optional[Dict[str, Any]]:
+    path = mission_json(repo, mission_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _plan_signature(d: Dict[str, Any]) -> tuple:
+    feats = set((d.get("features") or {}).keys())
+    mss = set((d.get("milestones") or {}).keys())
+    return (frozenset(feats), frozenset(mss))
 
 
 def save_mission(mission: Mission) -> None:
     ensure_dirs(mission.repo, mission.id)
     mission.updated_at = utcnow()
-    _atomic_write(mission_json(mission.repo, mission.id), json.dumps(mission.to_dict(), indent=2))
+    prev = _prev_state(mission.repo, mission.id)
+
+    # HG-10: structural plan changes must always land in plan_revisions. If the
+    # feature/milestone id sets changed vs the last persisted state and no
+    # existing revision covers the new structure, record who caught it (the
+    # store) - direct writes are no longer invisible.
+    if prev is not None and _plan_signature(prev) != _plan_signature(mission.to_dict()):
+        covered = any(
+            r.number == mission.current_revision
+            and set(r.feature_ids) == set(mission.features.keys())
+            and set(r.milestone_ids) == set(mission.milestones.keys())
+            for r in mission.plan_revisions
+        )
+        if not covered:
+            mission.current_revision += 1
+            mission.plan_revisions.append(PlanRevision(
+                number=mission.current_revision,
+                created_at=utcnow(),
+                note="external plan change (store)",
+                feature_ids=list(mission.features.keys()),
+                milestone_ids=list(mission.milestones.keys()),
+            ))
+            append_event(mission, "PLAN_REVISION_RECORDED", entity=mission.id,
+                         payload={"number": mission.current_revision, "note": "external plan change (store)"})
+
+    # HG-08: a hand-edited mission.json config block that is about to be
+    # overwritten (or that disagrees with the controller's config) must be
+    # visible, not silently lost.
+    if prev is not None:
+        prev_exec = (prev.get("config") or {}).get("execution") or {}
+        new_exec = (mission.config or {}).get("execution") or {}
+        if prev_exec and prev_exec != new_exec:
+            changed = {k: {"was": prev_exec.get(k), "now": new_exec.get(k)}
+                       for k in set(prev_exec) | set(new_exec) if prev_exec.get(k) != new_exec.get(k)}
+            append_event(mission, "CONFIG_DRIFT", entity=mission.id, payload={"changed": changed})
+        # The yaml mirror is human-readable but NEVER read back; a hand-edit
+        # there is silently ignored - surface that too.
+        try:
+            ypath = os.path.join(mission_dir(mission.repo, mission.id), "mission.yaml")
+            if os.path.exists(ypath):
+                ydoc = yaml.safe_load(open(ypath, encoding="utf-8")) or {}
+                y_exec = (ydoc.get("config") or {}).get("execution") or {}
+                if y_exec and y_exec != new_exec:
+                    changed = {k: {"yaml": y_exec.get(k), "now": new_exec.get(k)}
+                               for k in set(y_exec) | set(new_exec) if y_exec.get(k) != new_exec.get(k)}
+                    append_event(mission, "CONFIG_DRIFT", entity=mission.id,
+                                 payload={"source": "mission.yaml", "changed": changed})
+        except Exception:
+            pass
+
+    # HG-11: events are NEVER written here - events.jsonl is canonical.
+    payload = mission.to_dict()
+    payload.pop("events", None)
+    _atomic_write(mission_json(mission.repo, mission.id), json.dumps(payload, indent=2))
     try:
         with open(os.path.join(mission_dir(mission.repo, mission.id), "mission.yaml"), "w", encoding="utf-8") as f:
-            yaml.safe_dump(mission.to_dict(), f, sort_keys=False)
+            yaml.safe_dump(payload, f, sort_keys=False)
     except Exception:
         pass
     try:
         _atomic_write(plan_path(mission.repo, mission.id), render.plan_md(mission))
     except Exception:
         pass
+
+
+def prune_commits(mission: Mission, feature_id: str, keep: "set") -> List[str]:
+    """HG-12: curate a feature's commits list. Removes hashes not in `keep`
+    (e.g. junk commits never reachable from the feature's branch tip) and
+    returns the dropped hashes so the caller can record them in the event."""
+    f = mission.features.get(feature_id)
+    if not f:
+        return []
+    dropped = [c for c in f.commits if c not in keep]
+    f.commits = [c for c in f.commits if c in keep]
+    return dropped
 
 
 def append_event(mission: Mission, etype: str, entity: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

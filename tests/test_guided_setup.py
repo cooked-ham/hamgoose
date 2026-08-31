@@ -58,8 +58,9 @@ class _FakeSemantic:
 
 
 def test_empty_plan_retries_then_fails_loudly(tmp_path):
-    """A 0-feature plan must never reach approval: the planner gets one grounded
-    retry, then plan() raises and the mission stays re-plannable."""
+    """A 0-feature plan must never reach approval: the planner gets a grounded
+    retry and then a small-slice retry (HG-06), then plan() raises with
+    evidence and the mission stays re-plannable."""
     from hamgoose import store
     from hamgoose.controller import MissionController
 
@@ -70,9 +71,13 @@ def test_empty_plan_retries_then_fails_loudly(tmp_path):
     store.save_mission(m)
     with pytest.raises(ValueError, match="empty plan"):
         c.plan(m.id)
-    assert sem.calls == 2  # first attempt + grounded retry
+    assert sem.calls == 3  # full prompt + grounded retry + small-slice retry (HG-06)
     m2 = c._get(m.id)
     assert m2.status == MissionStatus.PLANNING  # still re-plannable
+    # HG-06: the failure event carries the planner evidence
+    evs = [e for e in store.read_events(str(tmp_path), m.id) if e["type"] == "PLAN_FAILED"]
+    assert evs and evs[-1]["payload"]["attempts"] == 3
+    assert "timed_out" in evs[-1]["payload"] and "raw_tail" in evs[-1]["payload"]
     # defense in depth: approve refuses an empty plan even if forced into the state
     m2.status = MissionStatus.AWAITING_APPROVAL
     store.save_mission(m2)

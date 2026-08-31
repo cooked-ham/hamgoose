@@ -37,6 +37,9 @@ class WorkerResult:
     notes: List[str] = field(default_factory=list)
     blocked_reason: str = ""
     raw: str = ""
+    #: full raw `goose run` stdout, size-capped (HG-01): persisted as .raw.json
+    #: BEFORE parsing so classification bugs cannot destroy the evidence.
+    raw_stdout: str = ""
     exit_code: Optional[int] = None
     timed_out: bool = False
     run_id: str = ""
@@ -66,18 +69,38 @@ def parse_worker_output(text: str, run_id: str = "", backend: str = "") -> Worke
     )
 
 
+#: cap for raw transcript capture (5 MB) — evidence without unbounded disk use
+RAW_CAPTURE_LIMIT = 5 * 1024 * 1024
+
+
 class WorkerBackend(ABC):
     name = "base"
 
     @abstractmethod
-    def run(self, prompt: str, workdir: str, role: Dict[str, Any], feature: Feature, timeout: Optional[int]) -> WorkerResult:
+    def run(
+        self,
+        prompt: str,
+        workdir: str,
+        role: Dict[str, Any],
+        feature: Feature,
+        timeout: Optional[int],
+        on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> WorkerResult:
         ...
 
 
 class GooseRunBackend(WorkerBackend):
     name = "goose_run"
 
-    def run(self, prompt: str, workdir: str, role: Dict[str, Any], feature: Feature, timeout: Optional[int]) -> WorkerResult:
+    def run(
+        self,
+        prompt: str,
+        workdir: str,
+        role: Dict[str, Any],
+        feature: Feature,
+        timeout: Optional[int],
+        on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> WorkerResult:
         rid = worker_id()
         fd, path = tempfile.mkstemp(suffix=".md")
         try:
@@ -91,15 +114,36 @@ class GooseRunBackend(WorkerBackend):
             if role.get("model") and role.get("model") != "inherit":
                 cmd += ["--model", role.get("model")]
             feature.worker.run_id = rid
+
+            def _poll(out_path: str, _err_path: str, elapsed: float) -> None:
+                # HG-14: surface mid-run progress (bytes + a cheap turn hint)
+                # instead of 420 s of silence. Best-effort only.
+                if on_progress is None:
+                    return
+                try:
+                    with open(out_path, "rb") as fh:
+                        fh.seek(0, os.SEEK_END)
+                        nbytes = fh.tell()
+                    with open(out_path, encoding="utf-8", errors="replace") as fh:
+                        chunk = fh.read()
+                except OSError:
+                    return
+                turn_hint = chunk.count('"role"')
+                on_progress({"run_id": rid, "bytes": nbytes, "turn_hint": turn_hint, "elapsed": round(elapsed, 1)})
+
             try:
-                stdout, stderr, exit_code, timed_out = gosub.run_captured(cmd, cwd=workdir, timeout=timeout)
+                stdout, stderr, exit_code, timed_out = gosub.run_captured(
+                    cmd, cwd=workdir, timeout=timeout, on_poll=_poll if on_progress else None
+                )
             except OSError as e:
                 return WorkerResult(status="unknown", raw=str(e), run_id=rid, exit_code=None, backend=self.name)
 
+            raw_stdout = (stdout or "")[:RAW_CAPTURE_LIMIT]
             text = extract_text(stdout, stderr)
             res = parse_worker_output(text, run_id=rid, backend=self.name)
             res.exit_code = exit_code
             res.timed_out = timed_out
+            res.raw_stdout = raw_stdout
             if exit_code not in (0, None) and res.status == "unknown":
                 res.status = "failed"
             return res
@@ -125,8 +169,23 @@ class MockBackend(WorkerBackend):
     def __init__(self, simulator: Optional[Callable[[Feature, str], Dict[str, Any]]] = None):
         self.simulator = simulator or _default_simulator
 
-    def run(self, prompt: str, workdir: str, role: Dict[str, Any], feature: Feature, timeout: Optional[int]) -> WorkerResult:
+    def run(
+        self,
+        prompt: str,
+        workdir: str,
+        role: Dict[str, Any],
+        feature: Feature,
+        timeout: Optional[int],
+        on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> WorkerResult:
         rid = worker_id()
+        # emit one synthetic progress tick so WORKER_PROGRESS (HG-14) is
+        # testable without a live leaf process
+        if on_progress is not None:
+            try:
+                on_progress({"run_id": rid, "bytes": 128, "turn_hint": 1, "elapsed": 0.0})
+            except Exception:
+                pass
         try:
             data = self.simulator(feature, workdir) or {}
         except Exception as e:  # simulate a crash

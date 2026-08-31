@@ -1,4 +1,26 @@
-# hamgoose — Configuration & Registration
+# hamgoose â€” Configuration & Registration
+
+## Config precedence (HG-08)
+
+Config resolves in this order (later wins, per-key deep merge):
+
+1. **factory defaults** (shown below)
+2. **`HAMGOOSE_CONFIG`** env (JSON)
+3. **`<repo>/.goose/hamgoose/config.json`** â€” per-repo defaults (same schema).
+   This is the canonical channel: a value set here applies to **every** mission
+   created in that repo, instead of one mission at a time. It is git-ignored
+   along with the rest of `/.goose/hamgoose/`.
+4. **`mission_create` `config` overrides** â€” per-mission (highest).
+
+`mission_create` echoes the **effective** config (resolved values, never bare
+`"inherit"`) so surprises are visible before approval. If a persisted mission's
+config block (json **or** the human-readable `mission.yaml` mirror) disagrees
+with what the controller is persisting, a `CONFIG_DRIFT` event is emitted
+naming every changed key â€” hand edits stop being silently lost.
+
+> Hand-editing `mission.yaml` is **not** a config channel (it is a derived
+> mirror, never read back). Use the repo config file or `mission_create`
+> overrides.
 
 ## Per-mission config
 
@@ -12,6 +34,7 @@ Pass `config` to `mission_create` (JSON object) or set `HAMGOOSE_CONFIG`
   "validator":    { "provider": "inherit", "model": "inherit", "max_turns": 32 },
   "execution":    { "max_concurrent_workers": 2, "max_feature_attempts": 3,
                     "worker_timeout": 420, "semantic_timeout": 180,
+                    "planner_timeout": 600, "model_preflight": true,
                     "max_steps_per_run": 6 },
   "validation":   { "scrutiny": true, "user_testing": true, "max_correction_attempts": 3 },
   "git":          { "enabled": true, "use_worktrees": true,
@@ -27,11 +50,29 @@ Pass `config` to `mission_create` (JSON object) or set `HAMGOOSE_CONFIG`
 - **`max_concurrent_workers`** (default **2**): the concurrency ceiling. Two is the
   default so the system behaves well with providers that limit concurrent
   requests. Never exceeded; conflicting features are additionally serialized.
-- **`max_feature_attempts`** (default **3**): bounded retries. Never retries forever.
+- **`max_feature_attempts`** (default **3**): bounded retries. Never retries
+  forever. **Manual retries count** toward the same budget
+  (`attempts + manual_retries >= max_attempts` stops further scheduling) and the
+  `FEATURE_RETRIED` event says `beyond_budget` when it does â€” see
+  `MISSION-LIFECYCLE.md`.
 - **`worker_timeout`** (default **420 seconds**): kills a stuck worker
-  (`WORKER_TIMEOUT`) instead of holding the host open indefinitely.
-- **`semantic_timeout`** (default **180 seconds**): bounds planning and validation
-  Goose calls.
+  (`WORKER_TIMEOUT`) instead of holding the host open indefinitely. A run that
+  finishes within a **10 s wall-clock grace** of the budget is still classified
+  `WORKER_TIMEOUT`, not an implementation failure (the 420.8 s edge case).
+- **`semantic_timeout`** (default **180 seconds**): bounds validation and
+  diagnosis Goose calls.
+- **`planner_timeout`** (default **600 seconds**): the planner's *own* budget
+  (HG-06). Decomposition reads the whole repo analysis and must not share the
+  short validator timeout. On timeout the planner retries once on a **smaller
+  repo slice** (top-level tree + README head) before failing â€” and every planner
+  exit emits an event with `timed_out` + redacted raw tail, so no silent planner
+  death is possible.
+- **`model_preflight`** (default **true**): at `mission_create`, run one bounded
+  smoke leaf (â‰¤ 60 s, `--max-turns 2`) on the *resolved* worker model and record
+  `repo_analysis.model_check` + a `Worker model:` readiness line
+  (`smoke OK` / `SMALL-OUTPUT-BUDGET` / `WARN`). It **reports only** â€” it never
+  switches models. The line is visible in `mission_status` before you approve.
+  Set `false` for fully-offline / deterministic environments.
 - **`max_steps_per_run`** (default **6**): keeps each `mission_run` call short;
   call it again to continue.
 - **`max_turns`** (default **32** per role): bounds each isolated Goose task. Raise
@@ -44,16 +85,16 @@ Pass `config` to `mission_create` (JSON object) or set `HAMGOOSE_CONFIG`
 ## Registering the extension
 
 All three paths below produce the same `extensions:` entry in Goose's
-config.yaml — pick whichever you prefer:
+config.yaml â€” pick whichever you prefer:
 
-1. **Goose's own menu (recommended)** — `goose configure` → **Extensions →
-   Add Extension** → Type `STDIO`, Name `hamgoose`, Command `hamgoose` (or
+1. **Goose's own menu (recommended)** â€” `goose configure` â†’ **Extensions â†’
+   Add Extension** â†’ Type `STDIO`, Name `hamgoose`, Command `hamgoose` (or
    `<python> -m hamgoose`). Toggle or remove it from the same menu later.
-2. **One command** — `hamgoose register`. Auto-detects the config path via
+2. **One command** â€” `hamgoose register`. Auto-detects the config path via
    `goose info`, merges atomically, keeps a `.bak` of the previous file.
    Flags: `--name <n>`, `--config <path>`, `--force`. Reverse with
    `hamgoose unregister`.
-3. **Manual** — add the YAML below to config.yaml (`goose info` prints the
+3. **Manual** â€” add the YAML below to config.yaml (`goose info` prints the
    path; on this machine `.../Block/goose/config/config.yaml`).
 
 ### Per run (no config change)
@@ -109,4 +150,4 @@ Add to the target repo's `.gitignore` so runtime logs never enter the user's rep
   they run concurrently; increase the time and turn limits per mission when a
   feature needs deeper investigation.
 - **mcp pin**: `mcp[cli]>=1.25.0,<2` matches the documented `FastMCP` model. A
-  future Goose requiring mcp 2.x needs the mechanical `FastMCP`→`MCPServer` rename.
+  future Goose requiring mcp 2.x needs the mechanical `FastMCP`â†’`MCPServer` rename.

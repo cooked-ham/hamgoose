@@ -11,7 +11,17 @@ Run as an MCP server via:
     python -m hamgoose  # module entry point
 """
 __all__ = ["main", "get_extension", "__version__"]
-__version__ = "0.1.6"
+
+try:
+    # HG-16: single source of truth - installed package metadata. The literal
+    # below is only the fallback when hamgoose runs from a source tree that was
+    # never installed (version skew between tree and install is exactly what
+    # the M-2026-1909541C forensics uncovered).
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("hamgoose")
+except Exception:  # pragma: no cover - source-tree fallback
+    __version__ = "0.1.8-dev"
 
 
 def main():

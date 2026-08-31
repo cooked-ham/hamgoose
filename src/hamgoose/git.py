@@ -18,10 +18,13 @@ class GitManager:
         self.repo = os.path.abspath(repo)
 
     def _run(self, args: List[str], cwd: Optional[str] = None, timeout: int = 120) -> Optional[str]:
+        # HG-15: always address the target explicitly with `git -C <abs>`.
+        # Relying on the child's cwd made is_repo() return false negatives when
+        # the analysis ran from a different directory than the repo argument.
+        target = os.path.abspath(cwd or self.repo)
         try:
             proc = subprocess.run(
-                ["git", *args],
-                cwd=cwd or self.repo,
+                ["git", "-C", target, *args],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
@@ -107,8 +110,7 @@ class GitManager:
         env.setdefault("GIT_COMMITTER_EMAIL", "hamgoose@localhost")
         try:
             proc = subprocess.run(
-                ["git", "commit", "-m", message, "--allow-empty"],
-                cwd=cwd or self.repo,
+                ["git", "-C", os.path.abspath(cwd or self.repo), "commit", "-m", message, "--allow-empty"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
@@ -123,6 +125,26 @@ class GitManager:
 
     def diff(self, a: str, b: str) -> str:
         return self._run(["diff", "--", a, b]) or ""
+
+    # -- commit forensics (HG-12 / HG-13) --------------------------------- #
+    def commit_exists(self, ref: str) -> bool:
+        return self._run(["cat-file", "-e", "{}^{{commit}}".format(ref)]) is not None
+
+    def rev_list(self, ref_range: str, cwd: Optional[str] = None) -> List[str]:
+        """Commits in `a..b` (or any rev-list range), oldest first."""
+        out = self._run(["rev-list", "--reverse", ref_range], cwd=cwd)
+        return [l.strip() for l in (out or "").splitlines() if l.strip()]
+
+    def commits_reachable_from(self, ref: str, base: Optional[str] = None, cwd: Optional[str] = None) -> List[str]:
+        """Commits reachable from ref (optionally limited to base..ref)."""
+        if base:
+            return self.rev_list("{}..{}".format(base, ref), cwd=cwd)
+        out = self._run(["rev-list", ref], cwd=cwd)
+        return [l.strip() for l in (out or "").splitlines() if l.strip()]
+
+    def changed_files_between(self, a: str, b: str, cwd: Optional[str] = None) -> List[str]:
+        out = self._run(["diff", "--name-only", a, b], cwd=cwd)
+        return [l.strip() for l in (out or "").splitlines() if l.strip()]
 
     # -- merge ------------------------------------------------------------ #
     def merge(self, branch: str, cwd: Optional[str] = None) -> Dict[str, object]:

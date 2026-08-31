@@ -21,7 +21,7 @@ import os
 import signal
 import subprocess
 import tempfile
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
@@ -43,11 +43,19 @@ def run_captured(
     cwd: Optional[str] = None,
     timeout: Optional[int] = None,
     env: Optional[Dict[str, str]] = None,
+    on_poll: Optional[Callable[[str, str, float], None]] = None,
+    poll_interval: float = 5.0,
 ) -> Tuple[str, str, Optional[int], bool]:
     """Run cmd, capturing stdout/stderr via temp files.
 
     Returns (stdout, stderr, exit_code, timed_out).
+
+    `on_poll(out_path, err_path, elapsed)` — optional watcher invoked every
+    `poll_interval` seconds while the process is alive (HG-14): lets callers
+    observe a long leaf run (bytes written, turn hints) instead of 420 s of
+    silence. Polling stops when the process exits or the timeout fires.
     """
+    import time
     fd_out, out_path = tempfile.mkstemp(suffix=".out")
     os.close(fd_out)
     fd_err, err_path = tempfile.mkstemp(suffix=".err")
@@ -65,15 +73,27 @@ def run_captured(
         with open(out_path, "w", encoding="utf-8", errors="replace") as of, \
                 open(err_path, "w", encoding="utf-8", errors="replace") as ef:
             proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=of, stderr=ef, **kwargs)
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                _kill_tree(proc)
+            started = time.monotonic()
+            while True:
+                remaining = None if timeout is None else timeout - (time.monotonic() - started)
+                if remaining is not None and remaining <= 0:
+                    timed_out = True
+                    _kill_tree(proc)
+                    try:
+                        proc.wait(timeout=20)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    break
+                wait_for = poll_interval if remaining is None else max(0.05, min(poll_interval, remaining))
                 try:
-                    proc.wait(timeout=20)
+                    proc.wait(timeout=wait_for)
+                    break  # process exited
                 except subprocess.TimeoutExpired:
-                    pass
+                    if on_poll is not None:
+                        try:
+                            on_poll(out_path, err_path, time.monotonic() - started)
+                        except Exception:
+                            pass  # progress observation must never kill the run
             exit_code = proc.returncode
     finally:
         pass

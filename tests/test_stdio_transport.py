@@ -1,5 +1,6 @@
 """Regression coverage for the real stdio MCP transport."""
 import asyncio
+import json
 import os
 import sys
 
@@ -12,7 +13,10 @@ async def test_mission_create_returns_over_stdio(tmp_path):
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "hamgoose"],
-        env=dict(os.environ, HAMGOOSE_REPO=repo),
+        # model_preflight off: this test covers the TRANSPORT, not the
+        # capability smoke (which spawns a live goose leaf, HG-07).
+        env=dict(os.environ, HAMGOOSE_REPO=repo,
+                 HAMGOOSE_CONFIG=json.dumps({"execution": {"model_preflight": False}})),
         cwd=repo,
     )
 

@@ -50,6 +50,13 @@ def mission_control(mission: Mission) -> str:
     if mission.rules:
         lines.append(f"Rules: {mission.rules}")
     lines.append(f"Status: {mission.status.value}")
+    # HG-07/HG-16: model check + extension version always visible in status
+    mc = (mission.repo_analysis or {}).get("model_check") or {}
+    if mc:
+        lines.append("Worker model: {} - {}".format(mc.get("model"), mc.get("verdict")))
+    ra = mission.repo_analysis or {}
+    if ra.get("plan_error"):
+        lines.append("Plan error: {}".format(ra.get("plan_error")))
     if mission.pause_reason:
         lines.append(f"Pause reason: {mission.pause_reason}")
     if mission.block_reason:
@@ -116,6 +123,10 @@ def readiness_md(report: Dict[str, Any]) -> str:
     for name in report.get("checks", []):
         lines.append(f"  {name:<22} {report.get(name, 'N/A')}")
     lines.append("")
+    if report.get("Worker model"):
+        lines.append(f"  {'Worker model':<22} {report.get('Worker model')}")
+    if report.get("hamgoose_version"):
+        lines.append(f"  {'hamgoose version':<22} {report.get('hamgoose_version')}")
     warn = [n for n in report.get("checks", []) if report.get(n) == "WARN"]
     fail = [n for n in report.get("checks", []) if report.get(n) == "FAIL"]
     lines.append(f"Warnings: {len(warn)}   Failures: {len(fail)}")

@@ -130,6 +130,7 @@ async def mission_create(
     )
     out = "Mission created: {}\n\n".format(m.id)
     out += ctl.readiness(m.id) + "\n\n"
+    out += ctl.config_summary(m.id) + "\n\n"
     out += "Next: call mission_plan to generate the structured plan.\n"
     return out
 
@@ -224,10 +225,50 @@ def mission_cancel(mission_id: str, repo: Optional[str] = None) -> str:
 
 @mcp.tool()
 def mission_retry_feature(mission_id: str, feature_id: str, repo: Optional[str] = None) -> str:
-    """Manually retry a failed/blocked feature."""
+    """Manually retry a failed/blocked feature. The retry counts toward the
+    feature's attempt budget (attempts + manual_retries >= max_attempts stops
+    further automated retries)."""
     ctl = _controller(repo)
-    ctl.retry_feature(mission_id, feature_id)
-    return "Feature {} reset to READY.".format(feature_id)
+    m = ctl.retry_feature(mission_id, feature_id)
+    f = m.features.get(feature_id)
+    return "Feature {} reset to READY (attempts={}, manual_retries={}, cap={}).".format(
+        feature_id, f.attempts, f.manual_retries, f.max_attempts)
+
+
+@mcp.tool()
+def mission_complete_feature(
+    mission_id: str,
+    feature_id: str,
+    summary: str,
+    commit: Optional[str] = None,
+    changed_files: Optional[str] = None,
+    tests: Optional[str] = None,
+    repo: Optional[str] = None,
+) -> str:
+    """Record work on a feature that was implemented OUTSIDE the worker pipeline
+    (by you, the lead agent, or a human). Use this instead of editing mission
+    state files by hand. Verifies the commit exists, runs the feature's
+    validation_commands, runs a real scrutiny validation on the diff, appends
+    proper events, and continues the normal milestone flow.
+
+    Args:
+        summary: what was implemented and why it meets the acceptance criteria.
+        commit: the git hash of the implementation (required for git missions).
+        changed_files: JSON list of paths (auto-derived from the commit if omitted).
+        tests: JSON list of verification commands you ran and their outcome.
+    """
+    ctl = _controller(repo)
+    m = ctl.complete_feature_external(
+        mission_id, feature_id, summary,
+        changed_files=json.loads(changed_files) if changed_files else None,
+        tests=json.loads(tests) if tests else None,
+        commit=commit,
+    )
+    f = m.features.get(feature_id)
+    v = m.milestones.get(f.milestone).validation[-1] if f and f.milestone in m.milestones and m.milestones[f.milestone].validation else None
+    verdict = "passed" if (v and v.passed) else "REVIEW (scrutiny did not pass - findings recorded)"
+    return "Feature {} completed externally ({}). Scrutiny {}. Status: {}.\n\n{}".format(
+        feature_id, commit or "no commit", verdict, m.status.value, ctl.status(mission_id))
 
 
 @mcp.tool()

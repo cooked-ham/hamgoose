@@ -40,8 +40,10 @@ def ready_features(mission: Mission, milestone_id: str) -> List[Feature]:
             f = mission.features.get(fid)
             if not f:
                 continue
-            if f.status in (FeatureStatus.FAILED, FeatureStatus.NEEDS_FIX) and f.attempts >= f.max_attempts:
-                continue  # exhausted retries
+            if f.status in (FeatureStatus.FAILED, FeatureStatus.NEEDS_FIX, FeatureStatus.READY) and (
+                f.attempts + getattr(f, "manual_retries", 0) >= f.max_attempts
+            ):
+                continue  # exhausted retries (automated + manual, HG-09)
             if f.status in (FeatureStatus.PENDING, FeatureStatus.READY, FeatureStatus.NEEDS_FIX, FeatureStatus.FAILED):
                 if all(_dep_ok(mission, d) for d in f.dependencies):
                     out.append(f)

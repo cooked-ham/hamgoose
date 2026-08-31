@@ -39,3 +39,25 @@ def test_events_append_only(tmp_path):
     assert len(evs) >= 2
     assert evs[0]["type"] == "MISSION_CREATED"
     assert os.path.exists(store.events_path(str(tmp_path), "M1"))
+
+
+def test_events_jsonl_is_canonical(tmp_path):
+    """HG-11: events live ONLY in events.jsonl; the mission file is a mirror
+    that is hydrated on load, so the two can never diverge."""
+    import json
+
+    m = _m(str(tmp_path))
+    store.append_event(m, "MISSION_CREATED", "M1")
+    store.save_mission(m)
+    mj = store.mission_json(str(tmp_path), "M1")
+    disk = json.load(open(mj))
+    assert "events" not in disk  # no dual-write path remains
+
+    # mutate the jsonl after save; a reload must reflect it
+    with open(store.events_path(str(tmp_path), "M1"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "t", "mission_id": "M1", "type": "INJECTED",
+                            "entity": "x", "payload": {}}) + "\n")
+    m2 = store.load_mission(str(tmp_path), "M1")
+    types = [e["type"] for e in m2.events]
+    assert "INJECTED" in types
+    assert "MISSION_CREATED" in types

@@ -18,12 +18,29 @@ import json
 import os
 import re
 import tempfile
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 from . import redact
 from .config import Config
 
 _FENCE = "```"
+
+
+@dataclass
+class SemanticResult:
+    """Outcome of one isolated semantic call, with the evidence needed to
+    classify deaths (HG-06): a bare string cannot distinguish 'the model
+    answered' from 'the leaf was killed at the timeout and we kept the tail'."""
+    text: str = ""
+    timed_out: bool = False
+    exit_code: Optional[int] = None
+    duration: float = 0.0
+    raw_tail: str = ""  # redacted tail of the raw process output
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.text) and not self.timed_out
 
 
 def extract_text(stdout: str, stderr: str = "") -> str:
@@ -106,6 +123,22 @@ class SemanticClient:
         self.sampler = sampler  # optional sync-or-async callable(prompt)->str
 
     def complete(self, prompt: str, role: str = "orchestrator") -> str:
+        """Compatibility wrapper: returns only the text (validator, replan)."""
+        return self.complete_detailed(prompt, role=role).text
+
+    def complete_detailed(
+        self,
+        prompt: str,
+        role: str = "orchestrator",
+        timeout: Optional[int] = None,
+        max_turns: Optional[int] = None,
+    ) -> SemanticResult:
+        """Run one semantic call and return the full outcome (HG-06).
+
+        `timeout` overrides the role's default (semantic_timeout) — the planner
+        passes planner_timeout; `max_turns` overrides the role's turn budget
+        (preflight smoke uses 2).
+        """
         if self.backend == "sampling" and self.sampler is not None:
             try:
                 res = self.sampler(prompt)
@@ -114,20 +147,32 @@ class SemanticClient:
                         res = asyncio.get_event_loop().run_until_complete(res)
                     except RuntimeError:
                         res = asyncio.run(res)
-                return str(res)
+                return SemanticResult(text=str(res))
             except RuntimeError:
-                res = asyncio.run(self.sampler(prompt))
-                return str(res)
-        return self._goose_run(prompt, role)
+                return SemanticResult(text=str(asyncio.run(self.sampler(prompt))))
+            except Exception as e:  # sampler failure must not be silent
+                return SemanticResult(text="", raw_tail=redact.redact(str(e))[:2000])
+        return self._goose_run(prompt, role, timeout=timeout, max_turns=max_turns)
 
-    def _goose_run(self, prompt: str, role: str) -> str:
+    def smoke(self, prompt: str, role: str = "worker", timeout: int = 60, max_turns: int = 2) -> SemanticResult:
+        """Bounded model-capability probe (HG-07): a tiny fenced-JSON task on
+        the resolved worker model. Reports only; never switches models."""
+        return self.complete_detailed(prompt, role=role, timeout=timeout, max_turns=max_turns)
+
+    def _goose_run(self, prompt: str, role: str, timeout: Optional[int] = None, max_turns: Optional[int] = None) -> SemanticResult:
+        import time
+
         role_cfg = self._role(role)
+        if timeout is None:
+            timeout = self.config.execution.semantic_timeout
+        if max_turns is None:
+            max_turns = role_cfg["max_turns"]
         fd, path = tempfile.mkstemp(suffix=".md")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(prompt)
             cmd = ["goose", "run", "-i", path, "--output-format", "json", "--quiet", "--no-session",
-                   "--max-turns", str(role_cfg["max_turns"])]
+                   "--max-turns", str(max_turns)]
             # "inherit" is a hamgoose sentinel, not a Goose provider name.
             # Omit inherited values so the child Goose process uses its active
             # provider/model instead of failing with Unknown provider: inherit.
@@ -137,11 +182,17 @@ class SemanticClient:
                 cmd += ["--model", role_cfg["model"]]
             from . import gosub
 
+            started = time.monotonic()
             try:
-                stdout, stderr, _exit, _to = gosub.run_captured(cmd, timeout=self.config.execution.semantic_timeout)
+                stdout, stderr, exit_code, timed_out = gosub.run_captured(cmd, timeout=timeout)
             except OSError as e:
-                return redact.redact(str(e))
-            return extract_text(stdout, stderr)
+                return SemanticResult(text="", exit_code=None, duration=time.monotonic() - started,
+                                      raw_tail=redact.redact(str(e))[:2000])
+            duration = time.monotonic() - started
+            text = extract_text(stdout, stderr)
+            raw_tail = redact.redact(((stdout or "") + "\n--stderr--\n" + (stderr or ""))[-2000:])
+            return SemanticResult(text=text, timed_out=timed_out, exit_code=exit_code,
+                                  duration=duration, raw_tail=raw_tail)
         finally:
             try:
                 os.remove(path)

@@ -5,6 +5,15 @@ parent's stdout/stderr. On Windows, reading those with pipes + communicate() can
 hang forever after the direct child exits because a grandchild keeps the pipe
 open. Capturing output to temp files and using proc.wait() (which only tracks the
 direct child's handle) avoids the hang. Timeouts kill the whole process tree.
+
+Environment sanitization: the npm launcher marks its server child with
+`HAMGOOSE_LAUNCHER=1` (its recursion guard). That marker would leak into every
+leaf `goose run` this module spawns, so the leaf Goose loads the registered
+`hamgoose` extension, the launcher trips its own guard, and the leaf stderr
+gets a spurious "recursion guard tripped — refusing to spawn" warning. Leaves
+never need the marker (they can resolve the real server normally), so we strip
+it here — the single choke point for all leaf spawns (workers, planners,
+validators).
 """
 from __future__ import annotations
 
@@ -44,7 +53,9 @@ def run_captured(
     fd_err, err_path = tempfile.mkstemp(suffix=".err")
     os.close(fd_err)
 
-    kwargs = {"cwd": cwd, "env": env if env is not None else dict(os.environ)}
+    child_env = dict(env if env is not None else os.environ)
+    child_env.pop("HAMGOOSE_LAUNCHER", None)  # see module docstring
+    kwargs = {"cwd": cwd, "env": child_env}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 

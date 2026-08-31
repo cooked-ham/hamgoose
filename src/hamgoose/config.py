@@ -23,7 +23,8 @@ class RoleConfig(BaseModel):
 class ExecutionConfig(BaseModel):
     max_concurrent_workers: int = Field(default=2, ge=1)
     max_feature_attempts: int = Field(default=3, ge=1)
-    worker_timeout: Optional[int] = Field(default=None, ge=1)
+    worker_timeout: Optional[int] = Field(default=1800, ge=1)
+    semantic_timeout: int = Field(default=900, ge=1)
     max_steps_per_run: int = Field(default=50, ge=1)
 
 

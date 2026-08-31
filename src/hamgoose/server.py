@@ -8,11 +8,13 @@ restart.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import Context
 
 from . import store
 from .config import Config
@@ -41,6 +43,44 @@ def _parse_config(config: Any) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             return None
     return config
+
+
+async def _call_with_progress(
+    ctl: MissionController,
+    method: str,
+    ctx: Optional[Context],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run a blocking controller method in a worker thread, forwarding its
+    progress reports to the client as MCP progress notifications so long tool
+    calls (plan/run/validate) show live activity instead of a silent wait."""
+    fn = getattr(ctl, method)
+    if ctx is None:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+
+    loop = asyncio.get_running_loop()
+    q: "asyncio.Queue" = asyncio.Queue()
+
+    def _cb(message: str, current: float, total: float) -> None:
+        # Queue is drained on the event loop thread; the callback runs on the
+        # worker thread, so marshal through call_soon_threadsafe.
+        loop.call_soon_threadsafe(q.put_nowait, (message, current, total))
+
+    ctl.set_progress(_cb)
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    while not fut.done():
+        try:
+            message, current, total = await asyncio.wait_for(q.get(), timeout=0.5)
+        except asyncio.TimeoutError:
+            continue
+        try:
+            await ctx.report_progress(current, total, message)
+        except Exception:
+            # No live MCP request backing the context (in-process tests) or the
+            # client declined progress: notifications are best-effort.
+            pass
+    return await fut
 
 
 mcp = FastMCP("hamgoose")
@@ -87,7 +127,7 @@ def mission_create(
 
 
 @mcp.tool()
-def mission_plan(mission_id: str, repo: Optional[str] = None, features: Optional[str] = None, milestones: Optional[str] = None) -> str:
+async def mission_plan(mission_id: str, repo: Optional[str] = None, features: Optional[str] = None, milestones: Optional[str] = None, ctx: Optional[Context] = None) -> str:
     """Generate the structured dependency-aware plan and present it for approval.
     No implementation happens until mission_approve is called.
 
@@ -97,8 +137,9 @@ def mission_plan(mission_id: str, repo: Optional[str] = None, features: Optional
     "dependencies":[],"acceptance_criteria":["..."],"expected_paths":["..."]}]'
     milestones='[{"id":"MS01","objective":"...","completion_criteria":["..."]}]'."""
     ctl = _controller(repo)
-    ctl.plan(mission_id, features=json.loads(features) if features else None,
-             milestones=json.loads(milestones) if milestones else None)
+    await _call_with_progress(ctl, "plan", ctx, mission_id,
+                              features=json.loads(features) if features else None,
+                              milestones=json.loads(milestones) if milestones else None)
     m = ctl._get(mission_id)
     return "PLAN (mission {}), status {}\n\n{}\n\nNext: call mission_approve to begin execution.".format(
         mission_id, m.status.value, ctl.plan_text(mission_id)
@@ -115,11 +156,13 @@ def mission_approve(mission_id: str, repo: Optional[str] = None) -> str:
 
 
 @mcp.tool()
-def mission_run(mission_id: str, repo: Optional[str] = None, max_steps: Optional[int] = None) -> str:
+async def mission_run(mission_id: str, repo: Optional[str] = None, max_steps: Optional[int] = None, ctx: Optional[Context] = None) -> str:
     """Advance the mission control loop (schedule, dispatch isolated workers,
-    validate, correct). Resumable - call again to continue an in-progress mission."""
+    validate, correct). Resumable - call again to continue an in-progress mission.
+    Progress is reported live via MCP progress notifications; call again (or
+    mission_status) to see the latest mission control output."""
     ctl = _controller(repo)
-    return ctl.run(mission_id, max_steps)
+    return await _call_with_progress(ctl, "run", ctx, mission_id, max_steps=max_steps)
 
 
 @mcp.tool()
@@ -180,10 +223,10 @@ def mission_retry_feature(mission_id: str, feature_id: str, repo: Optional[str] 
 
 
 @mcp.tool()
-def mission_validate(mission_id: str, kind: str = "scrutiny", repo: Optional[str] = None) -> str:
+async def mission_validate(mission_id: str, kind: str = "scrutiny", repo: Optional[str] = None, ctx: Optional[Context] = None) -> str:
     """Run a validator now (scrutiny | user_testing | final). Returns a structured verdict."""
     ctl = _controller(repo)
-    return ctl.validate(mission_id, kind)
+    return await _call_with_progress(ctl, "validate", ctx, mission_id, kind)
 
 
 # read-oriented tools (mirrored by Resources)
@@ -312,8 +355,11 @@ def start_mission(goal: str = "", rules: str = "") -> str:
         "4. Report the readiness result in one or two lines (only flag problems).\n"
         "5. Call mission_plan, summarize the plan (milestones, feature count, worker cap), "
         "and ask the user to approve or adjust.\n"
-        "6. On approval: mission_approve, then mission_run. Report progress as milestones "
-        "complete. If the mission BLOCKS or PAUSES, explain in plain language and ask how to proceed.\n"
+        "6. On approval: mission_approve, then drive the mission in SHORT VISIBLE BURSTS: "
+        "call mission_run with a small max_steps (e.g. 2-4) and paste the mission control "
+        "output (or a 1-2 line summary) between bursts, so the user always sees live "
+        "progress instead of a silent wait. If a burst makes no progress and the mission "
+        "is not COMPLETED, call mission_events to diagnose why before retrying.\n"
         "7. When COMPLETED, summarize what changed and where the result lives (branch/commits).\n"
     ).format(g=g, r=r)
 
@@ -346,7 +392,9 @@ def resume_mission(mission_id: str = "") -> str:
         )
     return (
         "Resume hamgoose mission {} (reconcile state after any restart). "
-        "Check mission_status; if paused/blocked call mission_resume, then mission_run."
+        "Check mission_status; if paused/blocked call mission_resume, then drive "
+        "mission_run in short visible bursts (small max_steps, paste the mission "
+        "control summary between bursts) until it completes or blocks."
     ).format(mission_id)
 
 

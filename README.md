@@ -73,6 +73,7 @@ reasoning.**
 | 🔍 **Two validators** | *Scrutiny* distrusts the worker's claims and inspects diff + tests; *user-testing* exercises the app from the user's perspective |
 | 🔁 **Automatic correction** | Failed validation becomes corrective features; the bounded loop repeats until the milestone passes |
 | 🧯 **Crash recovery** | Atomic JSON state + append-only event log — kill Goose mid-mission, reopen, it reconciles and continues |
+| 📡 **Live progress** | Long calls stream MCP progress notifications, and the guided flow runs in short visible bursts — you always see movement, never a silent wait |
 | 🧭 **Steering & replanning** | Change course mid-mission without losing completed work |
 | 🔐 **Secrets redacted** | Every persisted artifact scrubbed of keys, tokens, credentials |
 | 🪶 **Per-repo state** | Lives in `<repo>/.goose/hamgoose/` — nothing global, trivially git-ignored |

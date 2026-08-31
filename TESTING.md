@@ -12,6 +12,11 @@ uv pip install -p .venv "pytest>=8" "pytest-asyncio>=0.23"
 .venv\Scripts\python -m pytest -m "realgoose" -q
 ```
 
+> Windows note: if pytest cannot create its default per-user temp dir under
+> `%TEMP%` (e.g. `PermissionError: [WinError 5] … pytest-of-<user>`), point
+> basetemp at a repo-local (git-ignored) directory:
+> `-p no:cacheprovider --basetemp=.pytest_tmp`
+
 ## What is tested
 
 ### Unit (`tests/test_*.py`)

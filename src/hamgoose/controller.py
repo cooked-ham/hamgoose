@@ -70,6 +70,7 @@ class MissionController:
         self.semantic = semantic or SemanticClient(self.config)
         self.planner = planner  # optional deterministic planner for tests: (mission, goal)->plan dict
         self._project_context_override = project_context
+        self._progress_cb = None  # optional callback(msg, current, total) for MCP progress notifications
         if self.worker_backend is None:
             from .worker import GooseRunBackend
 
@@ -89,6 +90,35 @@ class MissionController:
             except Exception:
                 pass
         return self.config
+
+    # ------------------------------------------------------------------ #
+    # progress reporting (used by server.py -> MCP progress notifications)
+    # ------------------------------------------------------------------ #
+    def set_progress(self, cb) -> None:
+        """Attach a progress callback (message, current, total). Safe to call
+        before a long-running operation; always safe to leave attached."""
+        self._progress_cb = cb
+
+    def _report(self, message: str, current: float, total: float) -> None:
+        if self._progress_cb is not None:
+            try:
+                self._progress_cb(message, current, total)
+            except Exception:
+                pass
+
+    def _run_status_line(self, m: Mission) -> str:
+        """One-line progress summary used to keep the user informed between steps."""
+        ms = self._active_milestone(m)
+        if ms is None:
+            return "final validation"
+        feats = [f for f in m.milestone_features(ms.id) if f.status != FeatureStatus.SUPERSEDED]
+        done = sum(1 for f in feats if f.is_terminal)
+        total = len(feats)
+        running = [f.id for f in feats if f.status == FeatureStatus.RUNNING]
+        line = "{} ({}) {}/{} features done".format(ms.id, ms.objective[:40] or "milestone", done, total)
+        if running:
+            line += " · working: " + ", ".join(running)
+        return line
 
     def _project_context(self, m: Mission) -> str:
         if self._project_context_override is not None:
@@ -170,9 +200,12 @@ class MissionController:
             raise ValueError("cannot plan a mission in state {}".format(m.status.value))
 
         if features is None:
+            self._report("decomposing mission plan (isolated goose run)", 30, 100)
             plan_dict = self._generate_plan(m)
+            self._report("plan generated; validating structure", 80, 100)
         else:
             plan_dict = {"milestones": milestones or [], "features": features}
+            self._report("validating plan structure", 80, 100)
         if not plan_dict.get("features"):
             # Fail loudly instead of presenting an empty plan for approval:
             # a 0-feature plan is a planner failure, not a plan.
@@ -191,6 +224,7 @@ class MissionController:
         m.status = MissionStatus.AWAITING_APPROVAL
         store.append_event(m, "PLAN_GENERATED", entity=m.id, payload={"features": len(m.features), "milestones": len(m.milestones)})
         store.save_mission(m)
+        self._report("plan ready for approval", 100, 100)
         return m
 
     def _generate_plan(self, m: Mission) -> Dict[str, Any]:
@@ -296,11 +330,13 @@ class MissionController:
         self._reconcile(m)
         cfg = self._cfg(m)
         steps = max_steps or cfg.execution.max_steps_per_run
-        for _ in range(steps):
+        for i in range(steps):
+            self._report(self._run_status_line(m), i + 1, steps)
             stable = self._step(m)
             store.save_mission(m)
             if stable:
                 break
+        self._report(self._run_status_line(m), steps, steps)
         return self._run_summary(m)
 
     def _run_summary(self, m: Mission) -> str:
@@ -942,7 +978,9 @@ class MissionController:
         m = self._get(mission_id_)
         ms = self._active_milestone(m) or m.ordered_milestones()[-1]
         base, head = self._base_head(m)
+        self._report("running {} validation (isolated goose run)".format(kind), 10, 100)
         r = self.validation_backend.run(kind, m, ms.id if ms else "", base, head, self._base_workdir(m), self._project_context(m))
+        self._report("{} validation complete".format(kind), 100, 100)
         if ms:
             ms.validation.append(r)
         self._save_validation(m, (ms.id if ms else "final"), r)

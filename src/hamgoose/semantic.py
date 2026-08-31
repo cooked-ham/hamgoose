@@ -35,6 +35,8 @@ def extract_text(stdout: str, stderr: str = "") -> str:
     except (json.JSONDecodeError, ValueError):
         # Goose may emit a startup banner before the JSON payload unless
         # --quiet is used. Decode the first complete JSON value after it.
+        # A non-JSON preface (banner, warnings) is discarded, never merged
+        # into the message text.
         data = None
         decoder = json.JSONDecoder()
         starts = sorted(
@@ -67,7 +69,16 @@ def extract_text(stdout: str, stderr: str = "") -> str:
             return redact.redact(data["text"])
         if isinstance(data.get("response"), str):
             return redact.redact(data["response"])
-    return redact.redact(out + (("\n" + stderr) if stderr else ""))
+    # Not JSON at all: prefer stderr trailing warnings over the banner noise,
+    # then the raw stdout. If stdout is pure noise (banner/control chars) and
+    # stderr looks like content, use that; otherwise keep the stdout tail.
+    stderr = (stderr or "").strip()
+    if not data:
+        if stderr and ("error" in stderr.lower() or len(stderr) > len(out)):
+            return redact.redact(stderr[-4000:])
+        tail = out[-4000:] if len(out) > 4000 else out
+        return redact.redact(tail)
+    return redact.redact(out)
 
 
 def extract_json(text: str) -> Optional[Dict[str, Any]]:
@@ -127,7 +138,7 @@ class SemanticClient:
             from . import gosub
 
             try:
-                stdout, stderr, _exit, _to = gosub.run_captured(cmd, timeout=900)
+                stdout, stderr, _exit, _to = gosub.run_captured(cmd, timeout=self.config.execution.semantic_timeout)
             except OSError as e:
                 return redact.redact(str(e))
             return extract_text(stdout, stderr)

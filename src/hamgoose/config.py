@@ -52,6 +52,10 @@ class Config(BaseModel):
     def resolved_worker(self) -> Dict[str, Any]:
         return self._resolve(self.worker)
 
+    def resolved_orchestrator(self) -> Dict[str, Any]:
+        """Resolve the orchestrator role's inherited provider/model values."""
+        return self._resolve(self.orchestrator)
+
     def resolved_validator(self) -> Dict[str, Any]:
         return self._resolve(self.validator)
 

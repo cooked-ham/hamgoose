@@ -33,9 +33,25 @@ def extract_text(stdout: str, stderr: str = "") -> str:
     try:
         data = json.loads(out)
     except (json.JSONDecodeError, ValueError):
+        # Goose may emit a startup banner before the JSON payload unless
+        # --quiet is used. Decode the first complete JSON value after it.
         data = None
-    if isinstance(data, dict):
-        msgs = data.get("messages")
+        decoder = json.JSONDecoder()
+        starts = sorted(
+            (start, marker)
+            for marker in ("{", "[")
+            if (start := out.find(marker)) >= 0
+        )
+        for start, _marker in starts:
+            if start < 0:
+                continue
+            try:
+                data, _ = decoder.raw_decode(out[start:])
+                break
+            except json.JSONDecodeError:
+                continue
+    if isinstance(data, (dict, list)):
+        msgs = data if isinstance(data, list) else data.get("messages")
         if isinstance(msgs, list):
             for msg in reversed(msgs):
                 if isinstance(msg, dict) and msg.get("role") == "assistant":
@@ -46,6 +62,7 @@ def extract_text(stdout: str, stderr: str = "") -> str:
                     ]
                     if parts:
                         return redact.redact("\n".join(parts))
+    if isinstance(data, dict):
         if isinstance(data.get("text"), str):
             return redact.redact(data["text"])
         if isinstance(data.get("response"), str):
@@ -98,11 +115,14 @@ class SemanticClient:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(prompt)
-            cmd = ["goose", "run", "-i", path, "--output-format", "json", "--no-session",
+            cmd = ["goose", "run", "-i", path, "--output-format", "json", "--quiet", "--no-session",
                    "--max-turns", str(role_cfg["max_turns"])]
-            if role_cfg.get("provider"):
+            # "inherit" is a hamgoose sentinel, not a Goose provider name.
+            # Omit inherited values so the child Goose process uses its active
+            # provider/model instead of failing with Unknown provider: inherit.
+            if role_cfg.get("provider") and role_cfg.get("provider") != "inherit":
                 cmd += ["--provider", role_cfg["provider"]]
-            if role_cfg.get("model"):
+            if role_cfg.get("model") and role_cfg.get("model") != "inherit":
                 cmd += ["--model", role_cfg["model"]]
             from . import gosub
 
@@ -125,8 +145,4 @@ class SemanticClient:
             return self.config.resolved_validator()
         if role == "worker":
             return self.config.resolved_worker()
-        return {
-            "provider": self.config.orchestrator.provider,
-            "model": self.config.orchestrator.model,
-            "max_turns": self.config.orchestrator.max_turns,
-        }
+        return self.config.resolved_orchestrator()

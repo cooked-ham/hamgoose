@@ -65,9 +65,14 @@ def _parse_validation(kind: str, text: str) -> ValidationResult:
         )
         for f in (data.get("findings") or [])
     ]
+    passed = data.get("passed", False)
+    if isinstance(passed, str):
+        passed = passed.strip().lower() in {"true", "1", "yes", "passed"}
+    else:
+        passed = bool(passed)
     return ValidationResult(
         kind=kind,
-        passed=bool(data.get("passed", False)),
+        passed=passed,
         severity=str(data.get("severity", "none")),
         findings=findings,
         summary=str(data.get("summary", "")),
@@ -113,10 +118,15 @@ class MockValidationBackend(ValidationBackend):
 
     def run(self, kind, mission, milestone_id, base, head, workdir, project_context):
         data = self.checker(kind, mission, milestone_id, workdir) or {}
+        passed = data.get("passed", False)
+        if isinstance(passed, str):
+            passed = passed.strip().lower() in {"true", "1", "yes", "passed"}
+        else:
+            passed = bool(passed)
         findings = [Finding(**f) for f in (data.get("findings") or [])]
         return ValidationResult(
             kind=kind,
-            passed=bool(data.get("passed", False)),
+            passed=passed,
             severity=str(data.get("severity", "none")),
             findings=findings,
             summary=str(data.get("summary", "mock")),

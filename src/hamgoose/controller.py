@@ -593,8 +593,9 @@ class MissionController:
         f.worker.completed_at = store.utcnow()
         f.worker.exit_code = res.exit_code
         f.worker.backend = res.backend
-        f.worker.provider = cfg.worker.provider
-        f.worker.model = cfg.worker.model
+        resolved_role = cfg.resolved_worker()
+        f.worker.provider = resolved_role.get("provider") or cfg.worker.provider
+        f.worker.model = resolved_role.get("model") or cfg.worker.model
 
         # capture the worker's transcript (redacted)
         try:
@@ -1000,7 +1001,16 @@ class MissionController:
             os.makedirs(vdir, exist_ok=True)
             payload = {"kind": r.kind, "passed": r.passed, "severity": r.severity,
                        "summary": r.summary, "findings": [f.__dict__ for f in r.findings]}
-            with open(os.path.join(vdir, "{}-{}.json".format(milestone_id, len(m.final_validation))), "w", encoding="utf-8") as fh:
+            if milestone_id == "final":
+                sequence = len(m.final_validation)
+            else:
+                ms = m.milestones.get(milestone_id)
+                sequence = len(ms.validation) if ms else 1
+            # Validation runs are append-only evidence. Include the current
+            # count so scrutiny/user-testing reports cannot overwrite each
+            # other (the old code used final_validation for every report).
+            filename = "{}-{}.json".format(milestone_id, max(sequence, 1))
+            with open(os.path.join(vdir, filename), "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, indent=2))
         except Exception:
             pass

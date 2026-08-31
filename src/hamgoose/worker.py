@@ -83,11 +83,12 @@ class GooseRunBackend(WorkerBackend):
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(prompt)
-            cmd = ["goose", "run", "-i", path, "--output-format", "json", "--no-session",
+            cmd = ["goose", "run", "-i", path, "--output-format", "json", "--quiet", "--no-session",
                    "--max-turns", str(role.get("max_turns", 100))]
-            if role.get("provider"):
+            # "inherit" is a hamgoose sentinel, not a Goose provider name.
+            if role.get("provider") and role.get("provider") != "inherit":
                 cmd += ["--provider", role.get("provider")]
-            if role.get("model"):
+            if role.get("model") and role.get("model") != "inherit":
                 cmd += ["--model", role.get("model")]
             feature.worker.run_id = rid
             try:
